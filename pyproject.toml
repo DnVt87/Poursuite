@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "poursuite"
+version = "1.0.0"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.0",
+    "python-multipart>=0.0.9",
+    "selenium>=4.0",
+    "beautifulsoup4>=4.0",
+    "pandas>=2.0",
+    "tabulate>=0.9",
+]
+
+[project.scripts]
+poursuite = "poursuite.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["poursuite*"]
