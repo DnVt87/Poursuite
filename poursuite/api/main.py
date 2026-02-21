@@ -14,6 +14,7 @@ Cloudflare Tunnel handles TLS termination — no nginx or certificate management
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
 
 from poursuite.db.connection import DatabaseManager
 from poursuite.db.search import SearchEngine
@@ -36,7 +37,40 @@ app = FastAPI(
     description="Search Brazilian court documents across 677GB of SQLite databases.",
     version="1.0.0",
     lifespan=lifespan,
+    # Disable Swagger UI syntax highlighting — responses containing full court document
+    # text can be several MB of JSON, which causes the Swagger highlighter to recurse
+    # until it hits the JavaScript call stack limit.
+    swagger_ui_parameters={"syntaxHighlight": False},
 )
 
 app.include_router(search_router.router)
 app.include_router(stats_router.router)
+
+
+def _custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    # Register X-API-Key as the global security scheme so Swagger UI shows
+    # an "Authorize" button and automatically sends the header on every request.
+    schema.setdefault("components", {})["securitySchemes"] = {
+        "ApiKeyAuth": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-API-Key",
+        }
+    }
+    schema["security"] = [{"ApiKeyAuth": []}]
+
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi
