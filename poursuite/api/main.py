@@ -17,6 +17,7 @@ from fastapi import FastAPI
 
 from poursuite.db.connection import DatabaseManager
 from poursuite.db.search import SearchEngine
+from poursuite.api.routes import extract as extract_router
 from poursuite.api.routes import frontend as frontend_router
 from poursuite.api.routes import search as search_router
 
@@ -44,3 +45,4 @@ app = FastAPI(
 
 app.include_router(frontend_router.router)
 app.include_router(search_router.router)
+app.include_router(extract_router.router)

@@ -140,6 +140,7 @@ class SearchEngine:
         process_number: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        exclusion_terms: Optional[str] = None,
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
         deadline: Optional[float] = None,
@@ -149,15 +150,16 @@ class SearchEngine:
         Search across all relevant databases in parallel.
 
         Args:
-            keywords:       FTS keyword query (supports AND/OR/NOT and quoted phrases)
-            process_number: Partial or full process number to filter by
-            start_date:     Earliest document date (YYYY-MM-DD)
-            end_date:       Latest document date (YYYY-MM-DD)
-            page:           1-based page number
-            page_size:      Results per page (capped at MAX_PAGE_SIZE)
-            deadline:       Unix timestamp after which DB queries are skipped.
-                            Pass None (CLI) for no timeout; pass time.time() + N (API) for a hard cutoff.
-            max_workers:    Thread pool size
+            keywords:        FTS keyword query (supports AND/OR/NOT and quoted phrases)
+            process_number:  Partial or full process number to filter by
+            start_date:      Earliest document date (YYYY-MM-DD)
+            end_date:        Latest document date (YYYY-MM-DD)
+            exclusion_terms: Space-separated terms; processes containing any term are excluded
+            page:            1-based page number
+            page_size:       Results per page (capped at MAX_PAGE_SIZE)
+            deadline:        Unix timestamp after which DB queries are skipped.
+                             Pass None (CLI) for no timeout; pass time.time() + N (API) for a hard cutoff.
+            max_workers:     Thread pool size
 
         Returns:
             SearchPage with paginated results and a truncated flag.
@@ -202,6 +204,10 @@ class SearchEngine:
                     self.logger.error(f"Error processing results for database {db_id}: {e}")
 
         truncated = skipped_count > 0
+
+        # Apply exclusion filtering before pagination so total_processes is accurate
+        if exclusion_terms:
+            all_results = self.filter_processes(dict(all_results), exclusion_terms)
 
         # Sort each process's mentions by date descending
         for mentions in all_results.values():

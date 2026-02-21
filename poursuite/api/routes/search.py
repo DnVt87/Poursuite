@@ -49,9 +49,6 @@ def search(
 
     If the 30-second timeout is hit, results are partial and the response includes
     X-Truncated: true header and truncated=true in the body.
-
-    Note: exclusion_terms filtering is applied after pagination, so total_processes
-    reflects the pre-filter count.
     """
     engine = request.app.state.search_engine
     deadline = time.time() + SEARCH_TIMEOUT_SECONDS
@@ -61,14 +58,11 @@ def search(
         process_number=process_number,
         start_date=start_date,
         end_date=end_date,
+        exclusion_terms=exclusion_terms,
         page=page,
         page_size=page_size,
         deadline=deadline,
     )
-
-    if exclusion_terms:
-        filtered = engine.filter_processes(page_result.results, exclusion_terms)
-        page_result.results = filtered
 
     response_body = SearchResponse(
         total_processes=page_result.total_processes,
@@ -110,14 +104,11 @@ def export_csv(
         process_number=process_number,
         start_date=start_date,
         end_date=end_date,
+        exclusion_terms=exclusion_terms,
         page=page,
         page_size=page_size,
         deadline=deadline,
     )
-
-    if exclusion_terms:
-        filtered = engine.filter_processes(page_result.results, exclusion_terms)
-        page_result.results = filtered
 
     output = io.StringIO()
     writer = csv.writer(output)

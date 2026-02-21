@@ -1,4 +1,4 @@
-"""Serve the single-page HTML search frontend."""
+"""Serve the single-page HTML frontend (Search + Extract tabs)."""
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
@@ -24,28 +24,31 @@ _HTML = """<!DOCTYPE html>
     header {
       background: #13162a;
       border-bottom: 1px solid #252947;
-      padding: 14px 24px;
+      padding: 12px 24px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      gap: 20px;
       position: sticky;
       top: 0;
       z-index: 10;
     }
     header h1 {
-      font-size: 1.15rem;
+      font-size: 1.1rem;
       font-weight: 700;
       color: #7b8fff;
       letter-spacing: 0.06em;
+      white-space: nowrap;
     }
     .api-key-row {
       display: flex;
       align-items: center;
       gap: 8px;
+      margin-left: auto;
     }
     .api-key-row label {
       font-size: 0.8rem;
       color: #6b7280;
+      white-space: nowrap;
     }
     #apiKeyInput {
       background: #1c1f35;
@@ -54,11 +57,30 @@ _HTML = """<!DOCTYPE html>
       padding: 6px 10px;
       color: #dde1f0;
       font-size: 0.82rem;
-      width: 220px;
+      width: 200px;
       outline: none;
       transition: border-color 0.2s;
     }
     #apiKeyInput:focus { border-color: #7b8fff; }
+
+    /* ── Tab bar ── */
+    .tab-bar {
+      display: flex;
+      gap: 4px;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      border-radius: 6px;
+      padding: 7px 16px;
+      font-size: 0.84rem;
+      font-weight: 600;
+      color: #5a607a;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .tab-btn:hover { background: #1c1f35; color: #dde1f0; }
+    .tab-btn.active { background: #1c1f35; color: #7b8fff; }
 
     /* ── Layout ── */
     .container {
@@ -66,6 +88,7 @@ _HTML = """<!DOCTYPE html>
       margin: 0 auto;
       padding: 28px 20px;
     }
+    .tab-content.hidden { display: none !important; }
 
     /* ── Search card ── */
     .search-card {
@@ -97,7 +120,7 @@ _HTML = """<!DOCTYPE html>
       font-weight: 500;
       color: #7b8499;
     }
-    input[type="text"], input[type="date"], select {
+    input[type="text"], input[type="date"], select, textarea {
       background: #0d0f1a;
       border: 1px solid #252947;
       border-radius: 7px;
@@ -107,11 +130,36 @@ _HTML = """<!DOCTYPE html>
       outline: none;
       transition: border-color 0.2s;
       width: 100%;
+      font-family: inherit;
     }
     input[type="text"]:focus,
     input[type="date"]:focus,
-    select:focus { border-color: #7b8fff; background: #101328; }
-    input::placeholder { color: #3d4260; }
+    select:focus,
+    textarea:focus { border-color: #7b8fff; background: #101328; }
+    input::placeholder, textarea::placeholder { color: #3d4260; }
+    textarea { resize: vertical; line-height: 1.5; }
+
+    /* ── Checkbox label ── */
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.83rem;
+      font-weight: 500;
+      color: #7b8499;
+      cursor: pointer;
+    }
+    .checkbox-label input[type="checkbox"] {
+      width: 15px;
+      height: 15px;
+      accent-color: #4a58e8;
+      cursor: pointer;
+    }
+    .hint {
+      font-size: 0.74rem;
+      color: #3d4260;
+      margin-top: 2px;
+    }
 
     .form-actions {
       display: flex;
@@ -150,6 +198,15 @@ _HTML = """<!DOCTYPE html>
     }
     .btn-ghost:hover { background: #252947; color: #dde1f0; }
 
+    .btn-extract {
+      background: #1c1f35;
+      color: #7b8fff;
+      border: 1px solid #2e3255;
+      font-size: 0.8rem;
+    }
+    .btn-extract:hover:not(:disabled) { background: #252947; }
+    .btn-extract:disabled { opacity: 0.4; cursor: not-allowed; }
+
     /* ── Spinner ── */
     .spinner {
       width: 14px; height: 14px;
@@ -186,6 +243,12 @@ _HTML = """<!DOCTYPE html>
       flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 14px;
+    }
+    .results-header-left {
+      display: flex;
+      align-items: baseline;
+      gap: 14px;
+      flex-wrap: wrap;
     }
     .results-summary {
       font-size: 0.875rem;
@@ -321,10 +384,79 @@ _HTML = """<!DOCTYPE html>
       font-size: 0.9rem;
     }
 
+    /* ── Progress bar ── */
+    .progress-wrap {
+      margin-bottom: 16px;
+    }
+    .progress-track {
+      background: #1c1f35;
+      border-radius: 6px;
+      height: 8px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+    .progress-fill {
+      background: #4a58e8;
+      height: 100%;
+      width: 0%;
+      border-radius: 6px;
+      transition: width 0.4s ease;
+    }
+    .progress-text {
+      font-size: 0.82rem;
+      color: #5a607a;
+    }
+
+    /* ── Extract results table ── */
+    .extract-table-wrap {
+      overflow-x: auto;
+      border-radius: 9px;
+      border: 1px solid #252947;
+    }
+    .extract-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.81rem;
+      white-space: nowrap;
+    }
+    .extract-table th {
+      background: #1c1f35;
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 600;
+      color: #7b8499;
+      border-bottom: 1px solid #252947;
+      position: sticky;
+      top: 0;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    .extract-table th:hover { color: #dde1f0; background: #22263d; }
+    .extract-table th.sort-asc::after  { content: ' \25b2'; font-size: 0.65rem; color: #7b8fff; }
+    .extract-table th.sort-desc::after { content: ' \25bc'; font-size: 0.65rem; color: #7b8fff; }
+    .extract-table td {
+      padding: 9px 14px;
+      border-bottom: 1px solid #0d0f1a;
+      color: #a0aabb;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .extract-table tr:last-child td { border-bottom: none; }
+    .extract-table tr:hover td { background: #111428; }
+    .extract-table td.col-number {
+      font-family: "Cascadia Code", "Fira Code", "Courier New", monospace;
+      color: #7b8fff;
+      font-size: 0.82rem;
+    }
+    .extract-table td.col-error { color: #f08080; }
+
     /* ── Responsive ── */
     @media (max-width: 600px) {
       .form-grid { grid-template-columns: 1fr; }
       .form-group.span2 { grid-column: 1; }
+      .tab-btn { padding: 7px 10px; font-size: 0.78rem; }
     }
   </style>
 </head>
@@ -332,6 +464,10 @@ _HTML = """<!DOCTYPE html>
 
 <header>
   <h1>Poursuite</h1>
+  <nav class="tab-bar">
+    <button type="button" class="tab-btn active" data-tab="search">Search</button>
+    <button type="button" class="tab-btn" data-tab="extract">Extract eSAJ</button>
+  </nav>
   <div class="api-key-row">
     <label for="apiKeyInput">API Key</label>
     <input type="password" id="apiKeyInput" placeholder="Enter API key..." autocomplete="off">
@@ -340,85 +476,148 @@ _HTML = """<!DOCTYPE html>
 
 <div class="container">
 
-  <div class="search-card">
-    <h2>Search Court Documents</h2>
-    <form id="searchForm">
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!--  SEARCH TAB                                                     -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <div class="tab-content" id="tab-search">
+
+    <div class="search-card">
+      <h2>Search Court Documents</h2>
+      <form id="searchForm">
+        <div class="form-grid">
+
+          <div class="form-group">
+            <label for="fKeywords">Keywords</label>
+            <input type="text" id="fKeywords" name="keywords"
+                   placeholder='e.g. SISBAJUD OR (penhora AND conta)'>
+          </div>
+
+          <div class="form-group">
+            <label for="fProcess">Process Number</label>
+            <input type="text" id="fProcess" name="process_number"
+                   placeholder="1234567-89.2023.8.26.0001">
+          </div>
+
+          <div class="form-group">
+            <label for="fStart">Start Date</label>
+            <input type="date" id="fStart" name="start_date">
+          </div>
+
+          <div class="form-group">
+            <label for="fEnd">End Date</label>
+            <input type="date" id="fEnd" name="end_date">
+          </div>
+
+          <div class="form-group">
+            <label for="fExclude">Exclusion Terms</label>
+            <input type="text" id="fExclude" name="exclusion_terms"
+                   placeholder="Terms to exclude from results">
+          </div>
+
+          <div class="form-group">
+            <label for="fPageSize">Results per page</label>
+            <select id="fPageSize" name="page_size">
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100" selected>100</option>
+              <option value="250">250</option>
+              <option value="500">500</option>
+            </select>
+          </div>
+
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" id="searchBtn" class="btn btn-primary">Search</button>
+          <button type="button" id="csvBtn" class="btn btn-csv" disabled>Download CSV</button>
+          <button type="button" id="clearBtn" class="btn btn-ghost">Clear</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="statusBar" class="status hidden"></div>
+
+    <div id="resultsSection" class="hidden">
+      <div class="results-header">
+        <div class="results-header-left">
+          <div class="results-summary" id="resultsSummary"></div>
+          <button id="sendExtractBtn" class="btn btn-extract hidden" disabled>
+            Send to Extract &rarr;
+          </button>
+        </div>
+      </div>
+      <div id="processList" class="process-list"></div>
+      <div id="pagination" class="pagination"></div>
+    </div>
+
+  </div><!-- /tab-search -->
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!--  EXTRACT TAB                                                    -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <div class="tab-content hidden" id="tab-extract">
+
+    <div class="search-card">
+      <h2>Extract from eSAJ</h2>
       <div class="form-grid">
 
-        <div class="form-group">
-          <label for="fKeywords">Keywords</label>
-          <input type="text" id="fKeywords" name="keywords"
-                 placeholder='e.g. SISBAJUD OR (penhora AND conta)'>
+        <div class="form-group span2">
+          <label for="eNumbers">Process Numbers <span style="font-weight:400;color:#3d4260">(one per line)</span></label>
+          <textarea id="eNumbers" rows="7"
+                    placeholder="1234567-89.2023.8.26.0001&#10;9876543-21.2022.8.26.0100&#10;..."></textarea>
         </div>
 
         <div class="form-group">
-          <label for="fProcess">Process Number</label>
-          <input type="text" id="fProcess" name="process_number"
-                 placeholder="1234567-89.2023.8.26.0001">
-        </div>
-
-        <div class="form-group">
-          <label for="fStart">Start Date</label>
-          <input type="date" id="fStart" name="start_date">
-        </div>
-
-        <div class="form-group">
-          <label for="fEnd">End Date</label>
-          <input type="date" id="fEnd" name="end_date">
-        </div>
-
-        <div class="form-group">
-          <label for="fExclude">Exclusion Terms</label>
-          <input type="text" id="fExclude" name="exclusion_terms"
-                 placeholder="Terms to exclude from results">
-        </div>
-
-        <div class="form-group">
-          <label for="fPageSize">Results per page</label>
-          <select id="fPageSize" name="page_size">
-            <option value="25">25</option>
-            <option value="50">50</option>
-            <option value="100" selected>100</option>
-            <option value="250">250</option>
-            <option value="500">500</option>
+          <label for="eConcurrent">Concurrent browsers</label>
+          <select id="eConcurrent">
+            <option value="2">2</option>
+            <option value="4" selected>4</option>
+            <option value="6">6</option>
+            <option value="8">8</option>
           </select>
         </div>
 
-      </div>
+        <div class="form-group">
+          <label class="checkbox-label" for="eIncludeOther">
+            <input type="checkbox" id="eIncludeOther">
+            Include defendant's process count
+          </label>
+          <span class="hint">Makes an extra eSAJ request per process</span>
+        </div>
 
+      </div>
       <div class="form-actions">
-        <button type="submit" id="searchBtn" class="btn btn-primary">
-          Search
-        </button>
-        <button type="button" id="csvBtn" class="btn btn-csv" disabled>
-          Download CSV
-        </button>
-        <button type="button" id="clearBtn" class="btn btn-ghost">Clear</button>
+        <button type="button" id="eStartBtn" class="btn btn-primary">Start Extraction</button>
+        <button type="button" id="eClearBtn" class="btn btn-ghost">Clear</button>
       </div>
-    </form>
-  </div>
-
-  <div id="statusBar" class="status hidden"></div>
-
-  <div id="resultsSection" class="hidden">
-    <div class="results-header">
-      <div class="results-summary" id="resultsSummary"></div>
     </div>
-    <div id="processList" class="process-list"></div>
-    <div id="pagination" class="pagination"></div>
-  </div>
 
-</div>
+    <div id="eStatusBar" class="status hidden"></div>
+
+    <div id="eProgressWrap" class="progress-wrap hidden">
+      <div class="progress-track">
+        <div id="eProgressFill" class="progress-fill"></div>
+      </div>
+      <div id="eProgressText" class="progress-text">Preparing&hellip;</div>
+    </div>
+
+    <div id="eResultsSection" class="hidden">
+      <div class="results-header">
+        <div id="eResultsSummary" class="results-summary"></div>
+        <button id="eExportBtn" class="btn btn-csv" disabled>Download CSV</button>
+      </div>
+      <div id="eTableWrap" class="extract-table-wrap"></div>
+    </div>
+
+  </div><!-- /tab-extract -->
+
+</div><!-- /container -->
 
 <script>
   // ── Config ──────────────────────────────────────────────────
   const PREVIEW_LEN = 400;
 
-  // ── State ───────────────────────────────────────────────────
-  let currentPage = 1;
-  let searching   = false;
-
-  // ── API key (sessionStorage) ─────────────────────────────────
+  // ── Shared: API key ──────────────────────────────────────────
   const keyInput = document.getElementById('apiKeyInput');
   const stored = sessionStorage.getItem('poursuiteKey');
   if (stored) keyInput.value = stored;
@@ -427,7 +626,27 @@ _HTML = """<!DOCTYPE html>
   });
   function apiKey() { return keyInput.value.trim(); }
 
-  // ── Build URLSearchParams from form ─────────────────────────
+  // ── Tab switching ────────────────────────────────────────────
+  function switchTab(name) {
+    document.querySelectorAll('.tab-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.tab === name);
+    });
+    document.querySelectorAll('.tab-content').forEach(c => {
+      c.classList.toggle('hidden', c.id !== 'tab-' + name);
+    });
+  }
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+
+  // ════════════════════════════════════════════════════════════
+  //  SEARCH TAB
+  // ════════════════════════════════════════════════════════════
+
+  let currentPage = 1;
+  let searching   = false;
+  let lastSearchNumbers = [];
+
   function buildParams(page) {
     const form = document.getElementById('searchForm');
     const p = new URLSearchParams();
@@ -441,7 +660,6 @@ _HTML = """<!DOCTYPE html>
     return p;
   }
 
-  // ── Status bar ──────────────────────────────────────────────
   function setStatus(type, msg) {
     const bar = document.getElementById('statusBar');
     bar.className = 'status ' + type;
@@ -452,7 +670,6 @@ _HTML = """<!DOCTYPE html>
     document.getElementById('statusBar').classList.add('hidden');
   }
 
-  // ── Search ──────────────────────────────────────────────────
   async function doSearch(page) {
     if (searching) return;
 
@@ -499,12 +716,12 @@ _HTML = """<!DOCTYPE html>
     }
   }
 
-  // ── Render results ──────────────────────────────────────────
   function renderResults(data, page) {
-    const section   = document.getElementById('resultsSection');
-    const list      = document.getElementById('processList');
-    const summary   = document.getElementById('resultsSummary');
-    const csvBtn    = document.getElementById('csvBtn');
+    const section  = document.getElementById('resultsSection');
+    const list     = document.getElementById('processList');
+    const summary  = document.getElementById('resultsSummary');
+    const csvBtn   = document.getElementById('csvBtn');
+    const sendBtn  = document.getElementById('sendExtractBtn');
 
     if (data.truncated) {
       setStatus('warn',
@@ -527,6 +744,8 @@ _HTML = """<!DOCTYPE html>
       empty.textContent = 'No results found.';
       list.appendChild(empty);
       csvBtn.disabled = true;
+      sendBtn.classList.add('hidden');
+      sendBtn.disabled = true;
       section.classList.remove('hidden');
       renderPagination(page, totalPages);
       return;
@@ -536,17 +755,21 @@ _HTML = """<!DOCTYPE html>
       list.appendChild(buildProcessCard(proc));
     }
 
+    // Store process numbers for "Send to Extract"
+    lastSearchNumbers = data.results.map(r => r.process_number);
+    sendBtn.textContent = 'Send ' + lastSearchNumbers.length + ' to Extract \u2192';
+    sendBtn.classList.remove('hidden');
+    sendBtn.disabled = false;
+
     csvBtn.disabled = false;
     section.classList.remove('hidden');
     renderPagination(page, totalPages);
   }
 
-  // ── Build a process card ─────────────────────────────────────
   function buildProcessCard(proc) {
     const card = document.createElement('div');
     card.className = 'process-card';
 
-    // Header
     const header = document.createElement('div');
     header.className = 'process-header';
 
@@ -572,7 +795,6 @@ _HTML = """<!DOCTYPE html>
     header.appendChild(right);
     header.addEventListener('click', () => card.classList.toggle('open'));
 
-    // Mentions wrapper
     const wrap = document.createElement('div');
     wrap.className = 'mentions-wrap';
     for (const m of proc.mentions) {
@@ -584,7 +806,6 @@ _HTML = """<!DOCTYPE html>
     return card;
   }
 
-  // ── Build a single mention item ──────────────────────────────
   function buildMentionItem(m) {
     const item = document.createElement('div');
     item.className = 'mention-item';
@@ -601,7 +822,7 @@ _HTML = """<!DOCTYPE html>
     if (m.db_id)         meta.appendChild(metaSpan('🗄', m.db_id));
     if (m.file_path)     meta.appendChild(metaSpan('📄', m.file_path));
 
-    const full    = m.content || '';
+    const full     = m.content || '';
     const needsCut = full.length > PREVIEW_LEN;
     const preview  = needsCut ? full.slice(0, PREVIEW_LEN) + '\u2026' : full;
 
@@ -628,7 +849,6 @@ _HTML = """<!DOCTYPE html>
     return item;
   }
 
-  // ── Pagination ──────────────────────────────────────────────
   function renderPagination(current, total) {
     const pag = document.getElementById('pagination');
     pag.innerHTML = '';
@@ -659,7 +879,7 @@ _HTML = """<!DOCTYPE html>
     pag.appendChild(pageBtn('Next \u2192', current + 1, false, current >= total));
   }
 
-  // ── CSV download ─────────────────────────────────────────────
+  // ── CSV download (search) ────────────────────────────────────
   document.getElementById('csvBtn').addEventListener('click', async () => {
     const key = apiKey();
     if (!key) { setStatus('error', 'API key required.'); return; }
@@ -697,7 +917,13 @@ _HTML = """<!DOCTYPE html>
     }
   });
 
-  // ── Form submit / clear ──────────────────────────────────────
+  // ── Send to Extract ──────────────────────────────────────────
+  document.getElementById('sendExtractBtn').addEventListener('click', () => {
+    document.getElementById('eNumbers').value = lastSearchNumbers.join('\\n');
+    switchTab('extract');
+  });
+
+  // ── Search form submit / clear ───────────────────────────────
   document.getElementById('searchForm').addEventListener('submit', e => {
     e.preventDefault();
     doSearch(1);
@@ -707,8 +933,299 @@ _HTML = """<!DOCTYPE html>
     document.getElementById('searchForm').reset();
     document.getElementById('resultsSection').classList.add('hidden');
     document.getElementById('csvBtn').disabled = true;
+    document.getElementById('sendExtractBtn').classList.add('hidden');
     clearStatus();
     currentPage = 1;
+    lastSearchNumbers = [];
+  });
+
+  // ════════════════════════════════════════════════════════════
+  //  EXTRACT TAB
+  // ════════════════════════════════════════════════════════════
+
+  let extractJobId        = null;
+  let extractPollTimer    = null;
+  let extractResultCount  = 0;
+  let extractResults      = [];
+  let extractSortCol      = null;
+  let extractSortDir      = 'asc';
+
+  function setExtractStatus(type, msg) {
+    const bar = document.getElementById('eStatusBar');
+    bar.className = 'status ' + type;
+    bar.innerHTML = msg;
+    bar.classList.remove('hidden');
+  }
+  function clearExtractStatus() {
+    document.getElementById('eStatusBar').classList.add('hidden');
+  }
+
+  function parseProcessNumbers() {
+    return document.getElementById('eNumbers').value
+      .split('\\n')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+  }
+
+  function setExtractProgress(done, total) {
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    document.getElementById('eProgressFill').style.width = pct + '%';
+    document.getElementById('eProgressText').textContent =
+      'Processing ' + done + ' / ' + total + ' (' + pct + '%)';
+  }
+
+  async function startExtraction() {
+    const numbers = parseProcessNumbers();
+    if (!numbers.length) {
+      setExtractStatus('error', 'No process numbers entered.');
+      return;
+    }
+    const key = apiKey();
+    if (!key) {
+      setExtractStatus('error', 'Please enter your API key.');
+      return;
+    }
+
+    // Reset state
+    clearExtractStatus();
+    extractJobId       = null;
+    extractResultCount = 0;
+    document.getElementById('eProgressFill').style.width = '0%';
+    document.getElementById('eProgressText').textContent = 'Starting\u2026';
+    document.getElementById('eProgressWrap').classList.remove('hidden');
+    document.getElementById('eResultsSection').classList.remove('hidden');
+    document.getElementById('eResultsSummary').textContent = '';
+    document.getElementById('eTableWrap').innerHTML = '';
+    document.getElementById('eExportBtn').disabled = true;
+
+    const eStartBtn = document.getElementById('eStartBtn');
+    eStartBtn.disabled = true;
+    eStartBtn.innerHTML = '<span class="spinner"></span> Starting\u2026';
+
+    try {
+      const resp = await fetch('/extract/start', {
+        method: 'POST',
+        headers: { 'X-API-Key': key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          process_numbers: numbers,
+          concurrent: parseInt(document.getElementById('eConcurrent').value),
+          include_other_processes: document.getElementById('eIncludeOther').checked,
+        }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        setExtractStatus('error', 'Failed to start: ' + (err.detail || resp.statusText));
+        eStartBtn.disabled = false;
+        eStartBtn.textContent = 'Start Extraction';
+        return;
+      }
+
+      const { job_id } = await resp.json();
+      extractJobId = job_id;
+      setExtractProgress(0, numbers.length);
+
+      if (extractPollTimer) clearInterval(extractPollTimer);
+      extractPollTimer = setInterval(pollExtract, 2000);
+
+    } catch (err) {
+      setExtractStatus('error', 'Network error: ' + err.message);
+      eStartBtn.disabled = false;
+      eStartBtn.textContent = 'Start Extraction';
+    }
+  }
+
+  async function pollExtract() {
+    if (!extractJobId) return;
+    try {
+      const resp = await fetch('/extract/status/' + extractJobId, {
+        headers: { 'X-API-Key': apiKey() },
+      });
+      if (!resp.ok) return;
+
+      const data = await resp.json();
+      setExtractProgress(data.done, data.total);
+
+      if (data.results.length > extractResultCount) {
+        renderExtractTable(data.results);
+        extractResultCount = data.results.length;
+      }
+
+      if (data.status === 'done') {
+        finishExtraction(data.results);
+      } else if (data.status === 'error') {
+        clearInterval(extractPollTimer);
+        extractPollTimer = null;
+        document.getElementById('eStartBtn').disabled = false;
+        document.getElementById('eStartBtn').textContent = 'Start Extraction';
+        setExtractStatus('error', 'Extraction error: ' + (data.error || 'Unknown error'));
+      }
+    } catch (_) {
+      // Network blip — retry on next tick
+    }
+  }
+
+  function finishExtraction(results) {
+    clearInterval(extractPollTimer);
+    extractPollTimer = null;
+
+    const eStartBtn = document.getElementById('eStartBtn');
+    eStartBtn.disabled = false;
+    eStartBtn.textContent = 'Start Extraction';
+    document.getElementById('eExportBtn').disabled = false;
+
+    const successful = results.filter(r => !r.error).length;
+    const errors     = results.filter(r => r.error).length;
+    document.getElementById('eResultsSummary').innerHTML =
+      '<strong>' + results.length + '</strong> processed \u2014 ' +
+      '<strong>' + successful + '</strong> successful, ' +
+      '<strong>' + errors + '</strong> errors';
+    document.getElementById('eProgressText').textContent =
+      'Done. ' + results.length + ' processes extracted.';
+    document.getElementById('eProgressFill').style.width = '100%';
+  }
+
+  const EXTRACT_COLS = [
+    { key: 'number',          label: 'Process Number', cls: 'col-number' },
+    { key: 'initial_date',    label: 'Date' },
+    { key: 'class_type',      label: 'Class' },
+    { key: 'subject',         label: 'Subject' },
+    { key: 'value',           label: 'Value' },
+    { key: 'last_movement',   label: 'Last Movement' },
+    { key: 'status',          label: 'Status' },
+    { key: 'plaintiff',       label: 'Plaintiff' },
+    { key: 'defendant',       label: 'Defendant' },
+    { key: 'other_processes', label: 'Other Proc.' },
+    { key: 'error',           label: 'Error', cls: 'col-error' },
+  ];
+
+  // Parse a value cell (e.g. "R$ 1.234,56") to a number for sorting, or Infinity for empty
+  function parseSortValue(key, val) {
+    if (val === null || val === undefined || val === '') return Infinity;
+    if (key === 'other_processes') return Number(val) || 0;
+    if (key === 'value') {
+      // Strip currency symbols and convert BR decimal format to float
+      const n = parseFloat(String(val).replace(/[^\d,]/g, '').replace(',', '.'));
+      return isNaN(n) ? Infinity : n;
+    }
+    return String(val).toLowerCase();
+  }
+
+  function sortedResults() {
+    if (!extractSortCol) return extractResults;
+    return [...extractResults].sort((a, b) => {
+      const va = parseSortValue(extractSortCol, a[extractSortCol]);
+      const vb = parseSortValue(extractSortCol, b[extractSortCol]);
+      // Nulls/empty always last
+      if (va === Infinity && vb === Infinity) return 0;
+      if (va === Infinity) return 1;
+      if (vb === Infinity) return -1;
+      const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+      return extractSortDir === 'asc' ? cmp : -cmp;
+    });
+  }
+
+  function renderExtractTable(results) {
+    if (results !== undefined) extractResults = results;
+
+    const table = document.createElement('table');
+    table.className = 'extract-table';
+
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    for (const col of EXTRACT_COLS) {
+      const th = document.createElement('th');
+      th.textContent = col.label;
+      if (extractSortCol === col.key) {
+        th.classList.add(extractSortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+      }
+      th.addEventListener('click', () => {
+        if (extractSortCol === col.key) {
+          extractSortDir = extractSortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          extractSortCol = col.key;
+          extractSortDir = 'asc';
+        }
+        renderExtractTable();
+      });
+      headerRow.appendChild(th);
+    }
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    for (const row of sortedResults()) {
+      const tr = document.createElement('tr');
+      for (const col of EXTRACT_COLS) {
+        const td = document.createElement('td');
+        const val = row[col.key];
+        td.textContent = (val !== null && val !== undefined) ? String(val) : '';
+        if (col.cls && (col.cls !== 'col-error' || val)) {
+          td.className = col.cls;
+        }
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+
+    const wrap = document.getElementById('eTableWrap');
+    wrap.innerHTML = '';
+    wrap.appendChild(table);
+  }
+
+  // ── Extract CSV download ─────────────────────────────────────
+  document.getElementById('eExportBtn').addEventListener('click', async () => {
+    if (!extractJobId) return;
+    const key = apiKey();
+    if (!key) return;
+
+    const eExportBtn = document.getElementById('eExportBtn');
+    eExportBtn.disabled = true;
+    eExportBtn.innerHTML = '<span class="spinner"></span> Preparing\u2026';
+
+    try {
+      const resp = await fetch('/extract/export/' + extractJobId, {
+        headers: { 'X-API-Key': key },
+      });
+      if (!resp.ok) {
+        setExtractStatus('error', 'Export error ' + resp.status);
+        return;
+      }
+      const blob = await resp.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = 'esaj_results.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExtractStatus('error', 'Network error: ' + err.message);
+    } finally {
+      eExportBtn.disabled = false;
+      eExportBtn.textContent = 'Download CSV';
+    }
+  });
+
+  // ── Extract start / clear ────────────────────────────────────
+  document.getElementById('eStartBtn').addEventListener('click', startExtraction);
+
+  document.getElementById('eClearBtn').addEventListener('click', () => {
+    if (extractPollTimer) { clearInterval(extractPollTimer); extractPollTimer = null; }
+    document.getElementById('eNumbers').value = '';
+    document.getElementById('eProgressWrap').classList.add('hidden');
+    document.getElementById('eResultsSection').classList.add('hidden');
+    document.getElementById('eExportBtn').disabled = true;
+    document.getElementById('eStartBtn').disabled = false;
+    document.getElementById('eStartBtn').textContent = 'Start Extraction';
+    clearExtractStatus();
+    extractJobId       = null;
+    extractResultCount = 0;
+    extractResults     = [];
+    extractSortCol     = null;
+    extractSortDir     = 'asc';
   });
 </script>
 
@@ -718,5 +1235,5 @@ _HTML = """<!DOCTYPE html>
 
 @router.get("/", response_class=HTMLResponse)
 def serve_frontend():
-    """Serve the search frontend."""
+    """Serve the search + extract frontend."""
     return _HTML
