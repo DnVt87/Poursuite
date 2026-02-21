@@ -59,16 +59,25 @@ def format_currency(value: str) -> Optional[str]:
     return value
 
 
-# FTS5 special characters that need escaping to prevent SQLite crashes on bad input.
-_FTS_SPECIAL = re.compile(r'(["^*.\{\}\(\)\[\]|\\\/])')
+# Characters that are genuinely dangerous in FTS5 (cause syntax errors) but are NOT
+# part of valid query syntax. Parentheses, AND/OR/NOT, quotes, and * are valid FTS5
+# syntax and must NOT be escaped.
+_FTS_UNSAFE = re.compile(r'([\\^])')
 
 
 def sanitize_fts_query(query: str) -> str:
     """
-    Escape FTS5 special characters in a user-supplied query string.
-    Boolean operators AND, OR, NOT (uppercase) are preserved as-is.
-    Quoted phrases are passed through unchanged.
-    All other tokens have special characters backslash-escaped.
+    Minimally sanitize a user-supplied FTS5 query string.
+
+    Preserved as-is:
+      - Boolean operators: AND, OR, NOT
+      - Quoted phrases: "some phrase"
+      - Grouping parentheses: (SISBAJUD OR BACENJUD)
+      - Prefix wildcards: word*
+
+    Escaped (genuinely break SQLite FTS5):
+      - Backslash
+      - Caret
     """
     tokens = re.findall(r'(?:"[^"]*"|\S)+', query)
     sanitized = []
@@ -78,5 +87,5 @@ def sanitize_fts_query(query: str) -> str:
         elif token.startswith('"') and token.endswith('"'):
             sanitized.append(token)
         else:
-            sanitized.append(_FTS_SPECIAL.sub(r'\\\1', token))
+            sanitized.append(_FTS_UNSAFE.sub(r'\\\1', token))
     return ' '.join(sanitized)
