@@ -6,18 +6,12 @@ from datetime import datetime
 import time
 from tqdm import tqdm
 
+from poursuite.utils import setup_logging as _shared_setup_logging
 
-def setup_logging(log_file='split_database.log'):
-    """Configure logging"""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler()
-        ]
-    )
-    return logging.getLogger(__name__)
+
+def setup_logging(log_file=None):
+    """Configure logging via the shared poursuite logger."""
+    return _shared_setup_logging("split_database")
 
 
 class DatabaseSplitter:

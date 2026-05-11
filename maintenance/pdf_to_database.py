@@ -11,6 +11,9 @@ from tqdm import tqdm
 from datetime import datetime
 from typing import Dict, List, Optional, Set, Tuple
 
+from poursuite.config import STAGING_DB_DIR
+from poursuite.utils import setup_logging
+
 
 def process_pdf_worker(pdf_path_str: str) -> Tuple[int, List[Dict], str]:
     pdf_path = Path(pdf_path_str)
@@ -77,30 +80,46 @@ def extract_processes(text: str, results: List[Dict], pdf_path: Path, document_d
                 })
 
 
+PROCESSED_FILES_DB_NAME = "processed_files.db"
+
+
 class DatabaseManager:
-    """Handles creation and management of year-specific databases"""
+    """Handles creation and management of year-specific databases.
+
+    Per-year content shards live under ``STAGING_DB_DIR``. Dedup state lives in a
+    single sidecar SQLite DB (``processed_files.db``) so a year shard can be
+    deleted after publication without losing the record of which PDFs have
+    already been ingested.
+    """
 
     def __init__(self, base_dir: str = '.'):
         self.base_dir = Path(base_dir)
-        self.db_dir = Path("C:\\Poursuite\\Databases")
+        self.db_dir = STAGING_DB_DIR
         self.db_dir.mkdir(exist_ok=True, parents=True)
-        self.setup_logging()
+        self.logger = setup_logging("pdf_processor")
         self.connections = {}  # Cache for database connections
-
-    def setup_logging(self):
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler('pdf_processor.log'),
-                logging.StreamHandler()
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
+        self._processed_conn: Optional[sqlite3.Connection] = None
 
     def get_db_path(self, year: int) -> Path:
         """Get database path for specific year"""
         return self.db_dir / f"legal_documents_{year}.db"
+
+    def _processed_db_path(self) -> Path:
+        return self.db_dir / PROCESSED_FILES_DB_NAME
+
+    def _get_processed_connection(self) -> sqlite3.Connection:
+        if self._processed_conn is None:
+            conn = sqlite3.connect(str(self._processed_db_path()))
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.execute('''CREATE TABLE IF NOT EXISTS processed_files
+                         (file_path TEXT PRIMARY KEY,
+                          year INTEGER NOT NULL,
+                          processed_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_processed_year ON processed_files(year)')
+            conn.commit()
+            self._processed_conn = conn
+        return self._processed_conn
 
     def get_connection(self, year: int) -> sqlite3.Connection:
         """Get or create a database connection for a specific year"""
@@ -132,13 +151,8 @@ class DatabaseManager:
                       document_date DATE)''')
 
         # Create FTS5 virtual table for efficient full-text search
-        c.execute('''CREATE VIRTUAL TABLE IF NOT EXISTS paragraphs_fts 
+        c.execute('''CREATE VIRTUAL TABLE IF NOT EXISTS paragraphs_fts
                      USING fts5(content, content_rowid=id)''')
-
-        # Table to track processed files
-        c.execute('''CREATE TABLE IF NOT EXISTS processed_files
-                     (file_path TEXT PRIMARY KEY,
-                      processed_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
         # Create indices for faster searches
         c.execute('CREATE INDEX IF NOT EXISTS idx_process_number ON paragraphs(process_number)')
@@ -148,17 +162,17 @@ class DatabaseManager:
         # Create triggers to automatically maintain FTS index
         c.executescript('''
             CREATE TRIGGER IF NOT EXISTS paragraphs_ai AFTER INSERT ON paragraphs BEGIN
-                INSERT INTO paragraphs_fts(rowid, content) 
+                INSERT INTO paragraphs_fts(rowid, content)
                 VALUES (new.id, new.content);
             END;
 
             CREATE TRIGGER IF NOT EXISTS paragraphs_ad AFTER DELETE ON paragraphs BEGIN
-                INSERT INTO paragraphs_fts(paragraphs_fts, rowid, content) 
+                INSERT INTO paragraphs_fts(paragraphs_fts, rowid, content)
                 VALUES('delete', old.id, old.content);
             END;
 
             CREATE TRIGGER IF NOT EXISTS paragraphs_au AFTER UPDATE ON paragraphs BEGIN
-                INSERT INTO paragraphs_fts(paragraphs_fts, rowid, content) 
+                INSERT INTO paragraphs_fts(paragraphs_fts, rowid, content)
                 VALUES('delete', old.id, old.content);
                 INSERT INTO paragraphs_fts(rowid, content) VALUES (new.id, new.content);
             END;
@@ -172,19 +186,28 @@ class DatabaseManager:
             conn.commit()
             conn.close()
         self.connections = {}
+        if self._processed_conn is not None:
+            try:
+                self._processed_conn.commit()
+                self._processed_conn.close()
+            finally:
+                self._processed_conn = None
 
     def get_processed_files(self, year: int) -> Set[str]:
-        """Get set of already processed files for specific year"""
-        conn = self.get_connection(year)
+        """Get set of already processed files for specific year (from sidecar DB)"""
+        conn = self._get_processed_connection()
         c = conn.cursor()
-        c.execute('SELECT file_path FROM processed_files')
+        c.execute('SELECT file_path FROM processed_files WHERE year = ?', (year,))
         return {row[0] for row in c.fetchall()}
 
     def mark_file_as_processed(self, year: int, file_path: str):
-        """Mark a file as processed in the year-specific database"""
-        conn = self.get_connection(year)
+        """Mark a file as processed in the sidecar DB"""
+        conn = self._get_processed_connection()
         c = conn.cursor()
-        c.execute('INSERT INTO processed_files (file_path) VALUES (?)', (str(file_path),))
+        c.execute(
+            'INSERT OR IGNORE INTO processed_files (file_path, year) VALUES (?, ?)',
+            (str(file_path), year),
+        )
         conn.commit()
 
     def store_results(self, year: int, results: List[Dict]):
@@ -348,7 +371,7 @@ class DatabaseValidator:
     """Validates database integrity and provides statistics"""
 
     def __init__(self, db_dir: str = '.'):
-        self.db_dir = Path("C:\\Poursuite\\Databases")
+        self.db_dir = STAGING_DB_DIR
 
     def validate_all_databases(self):
         """Run validation on all year databases"""
@@ -403,8 +426,8 @@ class DatabaseValidator:
             conn = sqlite3.connect(str(db_path))
             c = conn.cursor()
 
-            # Get processing statistics
-            c.execute('SELECT COUNT(*) from processed_files')
+            # Distinct source PDFs that contributed paragraphs to this shard
+            c.execute('SELECT COUNT(DISTINCT file_path) from paragraphs')
             stats['processed_files'] = c.fetchone()[0]
 
             c.execute('SELECT COUNT(*) from paragraphs')
@@ -461,5 +484,4 @@ def process_all_pdfs(base_dir: str):
 
 if __name__ == '__main__':
     base_dir = input("Enter path to PDF directory: ")
-    os.environ["PYTHONTHREAD​POOLEXECUTOR_MAX_WORKERS"] = str(min(32, os.cpu_count() * 2))
     process_all_pdfs(base_dir)

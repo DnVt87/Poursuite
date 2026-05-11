@@ -7,6 +7,10 @@ OUTPUT_DIR: Path = Path(os.environ.get("POURSUITE_OUTPUT_DIR", "C:/Poursuite/Sea
 ESAJ_OUTPUT_DIR: Path = Path(os.environ.get("POURSUITE_ESAJ_OUTPUT_DIR", "C:/Poursuite/eSAJ"))
 LOG_DIR: Path = Path(os.environ.get("POURSUITE_LOG_DIR", "C:/Poursuite/Logs"))
 
+# --- Maintenance pipeline (offline) ---
+STAGING_DB_DIR: Path = Path(os.environ.get("POURSUITE_STAGING_DB_DIR", "C:/Poursuite/Staging"))
+COURT_DOCS_DIR: Path = Path(os.environ.get("POURSUITE_COURT_DOCS_DIR", "C:/Poursuite/CourtDocs"))
+
 # --- Logging ---
 SEARCH_LOG_FILE: Path = LOG_DIR / "search_engine.log"
 SCRAPER_LOG_FILE: Path = LOG_DIR / "tjsp_scraper.log"

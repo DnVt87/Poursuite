@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import re
 import time
 import hashlib
 import zlib
@@ -15,19 +16,16 @@ import multiprocessing
 from tqdm import tqdm
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from pybloom_live import BloomFilter
 
-def setup_logging(log_file='static_db_optimizer.log'):
-    """Configure logging"""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler()
-        ]
-    )
-    return logging.getLogger(__name__)
+from poursuite.utils import setup_logging as _shared_setup_logging
+
+
+def setup_logging(log_file=None):
+    """Configure logging via the shared poursuite logger."""
+    return _shared_setup_logging("static_db_optimizer")
+
+
+_YEAR_RE = re.compile(r'legal_documents_(\d{4})')
 
 
 class StaticDatabaseOptimizer:
@@ -56,16 +54,20 @@ class StaticDatabaseOptimizer:
         self.max_workers = min(cpu_count - 1,32) # Reserve one core for system operations
 
     def _extract_year_from_filename(self):
-        """Extract year from database filename"""
-        try:
-            # Assume filename format: legal_documents_YYYY.db
-            year_str = self.db_path.stem.split('_')[-1]
-            return int(year_str)
-        except (ValueError, IndexError):
-            # If we can't extract year, use current year but log warning
-            current_year = time.localtime().tm_year
-            self.logger.warning(f"Could not extract year from {self.db_path.name}, using current year {current_year}")
-            return current_year
+        """Extract year from database filename.
+
+        Handles both ``legal_documents_YYYY.db`` and the half-year convention
+        ``legal_documents_YYYY_<half>.db`` (e.g. ``legal_documents_2024_Jan-Jun.db``)
+        by matching the first 4-digit group after ``legal_documents_``.
+        """
+        match = _YEAR_RE.search(self.db_path.stem)
+        if match:
+            return int(match.group(1))
+        current_year = time.localtime().tm_year
+        self.logger.warning(
+            f"Could not extract year from {self.db_path.name}, using current year {current_year}"
+        )
+        return current_year
 
     def create_backup(self):
         """Create a backup of the original database"""
@@ -325,347 +327,200 @@ class StaticDatabaseOptimizer:
         return str(content)
 
     def create_optimized_archive(self, source_db, archive_db):
-        """
-        Create a read-optimized archive of the database with FTS support
+        """Create a read-optimized archive of the database with FTS support.
+
+        Connection lifecycle is split into three phases, each with a single
+        connection that is explicitly closed before the next opens:
+            A) Backup source -> archive (sets page_size at creation time).
+            B) Rebuild FTS, populate it, create specialized indices, integrity check.
+            C) VACUUM + ANALYZE on a dedicated connection (no other handles open).
+
+        Older versions of this method reassigned ``archive_conn`` mid-method
+        without closing the previous instance, which left two file handles
+        open during VACUUM (manifest as "database is locked") and could lose
+        index DDL that hadn't yet flushed when the new connection took over.
         """
         self.logger.info("\nStep 2: Creating read-optimized archive with FTS support")
 
-        # Connect to source database
-        src_conn = sqlite3.connect(str(source_db))
-        src_conn.execute("PRAGMA mmap_size = 8589934592")
-        src_cursor = src_conn.cursor()
-
-        # Set optimal parameters for destination database
-        archive_conn = sqlite3.connect(str(archive_db))
-        archive_conn.execute("PRAGMA mmap_size = 8589934592") # 8GB for memory-mapped I/O
-        archive_conn.execute("PRAGMA page_size = 32768")  # 32KB page size
-        archive_conn.execute(f"PRAGMA cache_size = -{self.cache_size_mb * 1000}") # Dynamic cache
-        archive_conn.execute("PRAGMA journal_mode = OFF")  # No journaling needed for read-only
-        archive_conn.execute("PRAGMA synchronous = OFF")  # No sync needed for initial creation
-        archive_conn.execute("PRAGMA locking_mode = NORMAL")  # Normal locking for read-only
-        archive_conn.execute("PRAGMA temp_store = MEMORY")  # Use memory for temp storage
-        archive_conn.execute("PRAGMA cache_spill = FALSE") # Keep cache in memory
-        archive_conn.execute("PRAGMA secure_delete = FALSE")  # Faster deletes
-        archive_conn.execute("PRAGMA threads = 8")  # Allow SQLite to use multiple threads
-
-        # Use backup API for efficient copy
+        # ---------- Phase A: backup source -> archive ----------
         self.logger.info("Copying database with backup API...")
-        src_conn.backup(archive_conn)
-
-        # Check if FTS table exists in source database
-        self.logger.info("Checking for FTS table in source database...")
-        src_cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='paragraphs_fts'")
-        fts_exists = src_cursor.fetchone() is not None
-
-        if fts_exists:
-            self.logger.info("FTS table found in source database. Recreating in optimized database...")
-            # Drop FTS table if it exists in destination (from backup)
-            archive_conn.execute("DROP TABLE IF EXISTS paragraphs_fts")
-
-            # Create the FTS5 virtual table
-            self.logger.info("Creating FTS5 virtual table...")
-            archive_conn.execute('''CREATE VIRTUAL TABLE paragraphs_fts 
-                                 USING fts5(content, content_rowid=id)''')
-
-            # Get the total count of rows to index
-            self.logger.info("Getting row count for FTS indexing...")
-            archive_cursor = archive_conn.cursor()
-            archive_cursor.execute("SELECT COUNT(*) FROM paragraphs")
-            total_rows = archive_cursor.fetchone()[0]
-            self.logger.info(f"Need to index {total_rows} rows")
-
-            # Create triggers to maintain FTS index
-            self.logger.info("Creating triggers for FTS table maintenance...")
-            archive_conn.executescript('''
-                CREATE TRIGGER IF NOT EXISTS paragraphs_ai AFTER INSERT ON paragraphs BEGIN
-                    INSERT INTO paragraphs_fts(rowid, content) 
-                    VALUES (new.id, new.content);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS paragraphs_ad AFTER DELETE ON paragraphs BEGIN
-                    INSERT INTO paragraphs_fts(paragraphs_fts, rowid, content) 
-                    VALUES('delete', old.id, old.content);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS paragraphs_au AFTER UPDATE ON paragraphs BEGIN
-                    INSERT INTO paragraphs_fts(paragraphs_fts, rowid, content) 
-                    VALUES('delete', old.id, old.content);
-                    INSERT INTO paragraphs_fts(rowid, content) VALUES (new.id, new.content);
-                END;
-            ''')
-
-            # Define a helper function for parallel processing
-            def process_fts_row(row_data):
-                row_id, content = row_data
-                content_text = None
-                if isinstance(content, bytes):
-                    try:
-                        # Try to decompress zlib content
-                        content_text = zlib.decompress(content).decode('utf-8')
-                    except:
-                        # If decompression fails, try to decode directly
-                        try:
-                            content_text = content.decode('utf-8', errors='replace')
-                        except:
-                            # Skip if we can't decode
-                            return None
-                else:
-                    content_text = str(content)
-
-                return row_id, content_text
-
-            # Process in batches to populate FTS table
-            batch_size = 25000
-            processed = 0
-
-            self.logger.info("Populating FTS table...")
-            with tqdm(total=total_rows, desc="Indexing for FTS") as pbar:
-                while processed < total_rows:
-                    # Get batch of rows
-                    archive_cursor.execute(
-                        "SELECT id, content FROM paragraphs LIMIT ? OFFSET ?",
-                        (batch_size, processed)
-                    )
-                    rows = archive_cursor.fetchall()
-
-                    if not rows:
-                        break
-
-                    # Process rows in parallel for better performance
-                    with ThreadPoolExecutor(max_workers=32) as executor:
-                        results = list(executor.map(process_fts_row, rows))
-
-                    # Insert into FTS table
-                    batch_insert = []
-                    for result in results:
-                        if result:  # Skip None results
-                            batch_insert.append(result)
-
-                    if batch_insert:
-                        try:
-                            archive_conn.execute("BEGIN TRANSACTION")
-
-                            archive_cursor.executemany(
-                                "INSERT INTO paragraphs_fts(rowid, content) VALUES (?, ?)",
-                                batch_insert
-                            )
-                            archive_conn.commit()
-
-                            if processed % (self.batch_size * 2) == 0:
-                                self.logger.info(f"Pausing to allow I/O queue to clear at {processed} records")
-                                time.sleep(0.5)
-                                disk_io = psutil.disk_io_counters()
-                                if disk_io:
-                                    time.sleep(0.5)
-
-                            if len(batch_insert) > 10000:
-                                self.logger.info(f"Successfully committed FTS batch of {len(batch_insert)} rows")
-                        except sqlite3.Error as e:
-                            self.logger.error(f"Error inserting into FTS: {e}")
-                            try:
-                                archive_conn.rollback()
-                                self.logger.info("FTS transaction rolled back successfully")
-                            except Exception as rollback_error:
-                                self.logger.info(f"Error during FTS rollback: {rollback_error}")
-
-                    # Commit batch
-                    archive_conn.commit()
-                    processed += len(rows)
-                    pbar.update(len(rows))
-
-                    # Periodic garbage collection
-                    if processed % (batch_size * 10) == 0:
-                        mem = psutil.virtual_memory()
-                        self.logger.info(f"RAM usage: {mem.percent}%, Available: {mem.available/1024/1024/1024:.2f}GB")
-                        gc.collect()
-
-            # Optimize the FTS table
-            self.logger.info("Optimizing FTS table...")
-            archive_conn.execute("INSERT INTO paragraphs_fts(paragraphs_fts) VALUES('optimize')")
-        else:
-            self.logger.warning("No FTS table found in source database. Creating new one...")
-
-            # Create a new FTS table from scratch
-            archive_conn.execute('''CREATE VIRTUAL TABLE IF NOT EXISTS paragraphs_fts 
-                                 USING fts5(content, content_rowid=id)''')
-
-            # Create triggers
-            archive_conn.executescript('''
-                CREATE TRIGGER IF NOT EXISTS paragraphs_ai AFTER INSERT ON paragraphs BEGIN
-                    INSERT INTO paragraphs_fts(rowid, content) 
-                    VALUES (new.id, new.content);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS paragraphs_ad AFTER DELETE ON paragraphs BEGIN
-                    INSERT INTO paragraphs_fts(paragraphs_fts, rowid, content) 
-                    VALUES('delete', old.id, old.content);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS paragraphs_au AFTER UPDATE ON paragraphs BEGIN
-                    INSERT INTO paragraphs_fts(paragraphs_fts, rowid, content) 
-                    VALUES('delete', old.id, old.content);
-                    INSERT INTO paragraphs_fts(rowid, content) VALUES (new.id, new.content);
-                END;
-            ''')
-
-            self.logger.info("Will populate FTS from paragraphs table...")
-
-            # Continue with populating FTS identical to the code above
-            archive_cursor = archive_conn.cursor()
-            archive_cursor.execute("SELECT COUNT(*) FROM paragraphs")
-            total_rows = archive_cursor.fetchone()[0]
-
-            # Define the processing function (same as above)
-            def process_fts_row(row_data):
-                row_id, content = row_data
-                content_text = None
-                if isinstance(content, bytes):
-                    try:
-                        content_text = zlib.decompress(content).decode('utf-8')
-                    except:
-                        try:
-                            content_text = content.decode('utf-8', errors='replace')
-                        except:
-                            return None
-                else:
-                    content_text = str(content)
-
-                return row_id, content_text
-
-            # Process in batches using the same logic as above
-            batch_size = 25000
-            processed = 0
-
-            self.logger.info("Populating FTS table...")
-            with tqdm(total=total_rows, desc="Indexing for FTS") as pbar:
-                while processed < total_rows:
-                    archive_cursor.execute(
-                        "SELECT id, content FROM paragraphs LIMIT ? OFFSET ?",
-                        (batch_size, processed)
-                    )
-                    rows = archive_cursor.fetchall()
-
-                    if not rows:
-                        break
-
-                    with ThreadPoolExecutor(max_workers=32) as executor:
-                        results = list(executor.map(process_fts_row, rows))
-
-                    batch_insert = []
-                    for result in results:
-                        if result:
-                            batch_insert.append(result)
-
-                    if batch_insert:
-                        try:
-                            archive_cursor.executemany(
-                                "INSERT INTO paragraphs_fts(rowid, content) VALUES (?, ?)",
-                                batch_insert
-                            )
-                        except sqlite3.Error as e:
-                            self.logger.error(f"Error inserting into FTS: {e}")
-
-                    archive_conn.commit()
-                    processed += len(rows)
-                    pbar.update(len(rows))
-
-                    if processed % (batch_size * 5) == 0:
-                        mem = psutil.virtual_memory()
-                        self.logger.info(f"RAM usage: {mem.percent}%, Available: {mem.available/1024/1024/1024:.2f}GB")
-                        gc.collect()
-
-            self.logger.info("Optimizing FTS table...")
-            archive_conn.execute("INSERT INTO paragraphs_fts(paragraphs_fts) VALUES('optimize')")
-
-        # Create optimized indices for common query patterns
-        self.logger.info("Creating specialized indices for read-only access...")
-        archive_conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_process_content ON paragraphs(process_number, document_date)")
-        archive_conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_document_process ON paragraphs(document_date, process_number)")
-        archive_conn.execute("CREATE INDEX IF NOT EXISTS idx_file_path ON paragraphs(file_path)")
-
-        # Integrity check
-        self.logger.info("Running integrity check before VACUUM...")
-        skip_vacuum = False
+        src_conn = sqlite3.connect(str(source_db))
         try:
-            archive_cursor = archive_conn.cursor()
-            archive_cursor.execute("PRAGMA integrity_check")
-            result = archive_cursor.fetchall()
-
-            if len(result) == 1 and result[0][0] == 'ok':
-                self.logger.info("Integrity check passed. Database is healthy.")
-            else:
-                self.logger.warning("Integrity check failed. Database may be corrupted:")
-                for error in result:
-                    self.logger.warning(f"  - {error[0]}")
-                self.logger.warning("Skipping VACUUM to avoid further issues.")
-                skip_vacuum = True
-        except Exception as e:
-            self.logger.error(f"Error during integrity check: {e}")
-            self.logger.warning("Skipping VACUUM due to integrity check error.")
-            skip_vacuum = True
-        else:
-            skip_vacuum = False
-
-        # Final vacuum for maximum compression - Must be done BEFORE setting read-only
-
-        if not skip_vacuum:
-            # Run VACUUM with error handling
-            self.logger.info("Running final VACUUM...")
+            src_conn.execute("PRAGMA mmap_size = 8589934592")
             archive_conn = sqlite3.connect(str(archive_db))
-            archive_conn.execute("PRAGMA page_size = 32768")  # 32KB page size
-            vacuum_cache_size = max(int(self.cache_size_mb * 750), 2000)
-            archive_conn.execute(f"PRAGMA cache_size = -{vacuum_cache_size}")  # Reduce size for VACUUM
-            archive_conn.execute("PRAGMA temp_store = MEMORY")
-            archive_conn.execute("PRAGMA journal_mode = OFF")
-            archive_conn.execute("PRAGMA mmap_size =0")
-
-            vacuum_success = self.run_vacuum_with_fallback(archive_conn, archive_db)
-
             try:
-                self.logger.info("Running ANALYZE to update statistics...")
-                archive_conn.execute("ANALYZE")
-                self.logger.info("ANALYZE completed successfully")
-            except Exception as e:
-                self.logger.warning(f"ANALYZE failed: {e}")
-            try:
-                archive_conn.commit()
+                # page_size only takes effect on a freshly created DB, so set it
+                # before backup writes any pages.
+                archive_conn.execute("PRAGMA page_size = 32768")
+                src_conn.backup(archive_conn)
+            finally:
                 archive_conn.close()
-            except:
-                pass
-
-        # Now set read-only pragmas AFTER VACUUM is complete and adjust settings
-        self.logger.info("Setting read-only pragmas...")
-        archive_conn = sqlite3.connect(str(archive_db))
-        archive_conn.execute("PRAGMA mmap_size = 8589934592")  # 8GB for memory-mapped I/O
-        archive_conn.execute("PRAGMA page_size = 32768")  # 32KB page size
-        archive_conn.execute(f"PRAGMA cache_size = -{self.cache_size_mb * 1000}") # Dynamic cache
-        archive_conn.execute("PRAGMA synchronous = OFF")
-        archive_conn.execute("PRAGMA locking_mode = NORMAL")
-        archive_conn.execute("PRAGMA query_only = ON")  # Mark as read-only
-
-        # Close connections
-        src_conn.close()
-        archive_conn.close()
-
-        # Reset any remaining connections
-        self.logger.info("Ensuring all database connections are close...")
-        temp_conn = sqlite3.connect(":memory:")
-        temp_conn.execute("PRAGMA shrink_memory")
-        temp_conn.close()
+            # Detect FTS in source while we still have src_conn
+            src_cursor = src_conn.cursor()
+            src_cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='paragraphs_fts'"
+            )
+            fts_in_source = src_cursor.fetchone() is not None
+        finally:
+            src_conn.close()
         gc.collect()
 
-        # Force exclusive access to ensure no lingering connections
-        self._close_all_connections(archive_db)
+        # ---------- Phase B: FTS rebuild + specialized indices + integrity check ----------
+        self.logger.info(
+            f"Rebuilding FTS and indices "
+            f"(source had FTS: {fts_in_source})"
+        )
+        archive_conn = sqlite3.connect(str(archive_db))
+        skip_vacuum = False
+        try:
+            archive_conn.execute("PRAGMA mmap_size = 8589934592")
+            archive_conn.execute(f"PRAGMA cache_size = -{self.cache_size_mb * 1000}")
+            archive_conn.execute("PRAGMA temp_store = MEMORY")
+            archive_conn.execute("PRAGMA journal_mode = MEMORY")
+            archive_conn.execute("PRAGMA synchronous = OFF")
+            archive_conn.execute("PRAGMA threads = 8")
 
-        # Pause to allow system to release resources
-        time.sleep(3)
+            # Drop any FTS that came across from backup, then recreate cleanly.
+            archive_conn.execute("DROP TABLE IF EXISTS paragraphs_fts")
+            archive_conn.execute(
+                "CREATE VIRTUAL TABLE paragraphs_fts USING fts5(content, content_rowid=id)"
+            )
+            archive_conn.executescript('''
+                CREATE TRIGGER IF NOT EXISTS paragraphs_ai AFTER INSERT ON paragraphs BEGIN
+                    INSERT INTO paragraphs_fts(rowid, content)
+                    VALUES (new.id, new.content);
+                END;
+                CREATE TRIGGER IF NOT EXISTS paragraphs_ad AFTER DELETE ON paragraphs BEGIN
+                    INSERT INTO paragraphs_fts(paragraphs_fts, rowid, content)
+                    VALUES('delete', old.id, old.content);
+                END;
+                CREATE TRIGGER IF NOT EXISTS paragraphs_au AFTER UPDATE ON paragraphs BEGIN
+                    INSERT INTO paragraphs_fts(paragraphs_fts, rowid, content)
+                    VALUES('delete', old.id, old.content);
+                    INSERT INTO paragraphs_fts(rowid, content) VALUES (new.id, new.content);
+                END;
+            ''')
+            archive_conn.commit()
 
-        # Log results
+            self._populate_fts(archive_conn)
+
+            self.logger.info("Optimizing FTS table...")
+            archive_conn.execute("INSERT INTO paragraphs_fts(paragraphs_fts) VALUES('optimize')")
+            archive_conn.commit()
+
+            self.logger.info("Creating specialized indices for read-only access...")
+            archive_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_process_content "
+                "ON paragraphs(process_number, document_date)"
+            )
+            archive_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_document_process "
+                "ON paragraphs(document_date, process_number)"
+            )
+            archive_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_file_path ON paragraphs(file_path)"
+            )
+            archive_conn.commit()
+
+            # Integrity check on the same connection (no need for a fresh one).
+            self.logger.info("Running integrity check before VACUUM...")
+            try:
+                cursor = archive_conn.cursor()
+                cursor.execute("PRAGMA integrity_check")
+                result = cursor.fetchall()
+                if len(result) == 1 and result[0][0] == 'ok':
+                    self.logger.info("Integrity check passed.")
+                else:
+                    self.logger.warning("Integrity check failed; skipping VACUUM:")
+                    for row in result:
+                        self.logger.warning(f"  - {row[0]}")
+                    skip_vacuum = True
+            except Exception as e:
+                self.logger.error(f"Integrity check raised: {e}; skipping VACUUM.")
+                skip_vacuum = True
+        finally:
+            archive_conn.close()
+        # Force any lingering Python references / SQLite cursors to release
+        # before we open the dedicated VACUUM connection.
+        gc.collect()
+
+        # ---------- Phase C: VACUUM + ANALYZE on a dedicated connection ----------
+        if not skip_vacuum:
+            self.logger.info("Running final VACUUM (dedicated connection)...")
+            vacuum_conn = sqlite3.connect(str(archive_db))
+            try:
+                vacuum_cache_size = max(int(self.cache_size_mb * 750), 2000)
+                vacuum_conn.execute(f"PRAGMA cache_size = -{vacuum_cache_size}")
+                vacuum_conn.execute("PRAGMA temp_store = MEMORY")
+                vacuum_conn.execute("PRAGMA journal_mode = OFF")
+                vacuum_conn.execute("PRAGMA mmap_size = 0")
+                vacuum_conn.execute("PRAGMA busy_timeout = 60000")
+                try:
+                    vacuum_conn.execute("VACUUM")
+                    self.logger.info("VACUUM completed.")
+                except sqlite3.OperationalError as e:
+                    self.logger.warning(f"VACUUM failed: {e}; continuing without it.")
+                try:
+                    vacuum_conn.execute("ANALYZE")
+                    self.logger.info("ANALYZE completed.")
+                except Exception as e:
+                    self.logger.warning(f"ANALYZE failed: {e}")
+            finally:
+                vacuum_conn.close()
+        gc.collect()
+
         archive_size = os.path.getsize(archive_db)
         self.logger.info(
-            f"Read-optimized archive created with FTS support. Size: {archive_size / (1024 * 1024):.2f} MB")
+            f"Read-optimized archive created. Size: {archive_size / (1024 * 1024):.2f} MB"
+        )
+
+    def _populate_fts(self, archive_conn):
+        """Decompress + decode each paragraph and insert into paragraphs_fts."""
+        cursor = archive_conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM paragraphs")
+        total_rows = cursor.fetchone()[0]
+        self.logger.info(f"Indexing {total_rows} rows for FTS...")
+
+        def transform(row_data):
+            row_id, content = row_data
+            if isinstance(content, bytes):
+                try:
+                    return row_id, zlib.decompress(content).decode('utf-8')
+                except Exception:
+                    try:
+                        return row_id, content.decode('utf-8', errors='replace')
+                    except Exception:
+                        return None
+            return row_id, str(content)
+
+        batch_size = 25000
+        processed = 0
+        with tqdm(total=total_rows, desc="Indexing for FTS") as pbar:
+            while processed < total_rows:
+                cursor.execute(
+                    "SELECT id, content FROM paragraphs LIMIT ? OFFSET ?",
+                    (batch_size, processed),
+                )
+                rows = cursor.fetchall()
+                if not rows:
+                    break
+                with ThreadPoolExecutor(max_workers=32) as executor:
+                    transformed = [r for r in executor.map(transform, rows) if r is not None]
+                if transformed:
+                    cursor.executemany(
+                        "INSERT INTO paragraphs_fts(rowid, content) VALUES (?, ?)",
+                        transformed,
+                    )
+                    archive_conn.commit()
+                processed += len(rows)
+                pbar.update(len(rows))
+                if processed % (batch_size * 10) == 0:
+                    mem = psutil.virtual_memory()
+                    self.logger.info(
+                        f"RAM usage: {mem.percent}%, Available: "
+                        f"{mem.available/1024/1024/1024:.2f}GB"
+                    )
+                    gc.collect()
 
     def create_compressed_archive(self, source_db, compressed_archive):
         """Create a compressed archive for long-term storage"""
@@ -767,41 +622,6 @@ class StaticDatabaseOptimizer:
         # This often helps flush memory on Windows
         ctypes.windll.kernel32.SetProcessWorkingSetSize(-1, -1) if 'ctypes' in sys.modules else None
 
-    def _close_all_connections(self, db_path):
-        """Force close all connections to a database file with multiple strategies"""
-
-        # Strategy 1: Try exclusive access
-        try:
-            db_path_str = str(db_path).replace('\\','\\\\')
-            conn = sqlite3.connect(f"file:{db_path_str}?mode=exclusive", uri=True)
-            conn.close()
-            self.logger.info(f"Successfully obtained exclusive access to {db_path}")
-            return True
-        except sqlite3.OperationalError:
-            self.logger.warning(f"Could not get exclusive access to {db_path}, trying alternatives...")
-
-        # Additional cleanup steps
-        try:
-            self.logger.info("Attempting to close any remaining connections")
-            # Reset SQLite's internal state
-            temp_conn = sqlite3.connect(":memory:")
-            temp_conn.execute("PRAGMA shrink_memory")
-            temp_conn.close()
-            # Force garbage collection to release any connection objects
-            gc.collect()
-            # Waiut longer on Windows
-            time.sleep(30)
-
-            # Try again with the corrected syntax
-            db_path_str = str(db_path)
-            conn = sqlite3.connect(f"file:{db_path_str}?mode=exclusive", uri=True)
-            conn.close()
-            self.logger.info(f"Successfully obtained exclusive access to {db_path}")
-            return True
-        except sqlite3.OperationalError as e:
-            self.logger.warning(f"Still could not get exlcusive acces: {e}")
-            return False
-
     def _check_7zip(self):
         """Check if 7zip is available"""
         seven_zip_path = r"C:\Program Files\7-Zip\7z.exe"
@@ -849,40 +669,6 @@ class StaticDatabaseOptimizer:
                 self.temp_dir.rmdir()
             except:
                 pass
-
-    def run_vacuum_with_fallback(self, conn, db_path):
-        """Run VACUUM with fallback options to ensure it completes"""
-
-        # First try direct vacuum
-        try:
-            self.logger.info("Attempting normal VACUUM operation...")
-            conn.execute("PRAGMA busy_timeout = 60000")  # 60 seconds
-            conn.execute("VACUUM")
-            self.logger.info("VACUUM completed successfully")
-            return True
-        except sqlite3.OperationalError as e:
-            self.logger.warning(f"Initial VACUUM failed: {e}")
-
-        # Try with a completely new connection
-        try:
-            conn.close()
-            gc.collect()
-            time.sleep(20)
-
-            # Simpler approach without the URI
-            vacuum_conn = sqlite3.connect(str(db_path))
-            vacuum_conn.execute("PRAGMA journal_mode = OFF")
-            vacuum_conn.execute("PRAGMA synchronous = OFF")
-            vacuum_conn.execute("PRAGMA temp_store = MEMORY")
-            vacuum_conn.execute("VACUUM")
-            vacuum_conn.close()
-            self.logger.info("Simple reconnect VACUUM completed successfully")
-            return True
-        except sqlite3.OperationalError as e:
-            self.logger.warning(f"Reconnect VACUUM failed: {e}")
-
-        self.logger.warning("All VACUUM attempts failed. Continuing without VACUUM.")
-        return False
 
 def cleanup_resources():
     """Clean up resources after processing"""

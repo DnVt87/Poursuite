@@ -1,15 +1,37 @@
-from datetime import datetime, timedelta
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import Select
-from selenium.webdriver.chrome.options import Options
+"""TJSP DJE downloader.
+
+The DJE web form (https://dje.tjsp.jus.br/cdje) deliberately disables both the
+caderno <select> and the Download button on initial page load; the only
+documented re-enable path is clicking through the JsDatePick calendar widget,
+which is not reliably driveable from Selenium (the date input is `readonly` and
+the calendar's enable logic does not fire from a programmatic value set or a
+plain `change` dispatch).
+
+The download endpoint itself is a simple GET that requires only the session
+cookies issued by loading /cdje. We bypass the form and hit it directly:
+
+    /cdje/downloadCaderno.do?dtDiario=DD/MM/YYYY&cdCaderno=NN&tpDownload=D
+
+A successful response is `Content-Type: application/octet-stream` with the PDF
+body. If the date has no publication (weekend, holiday, recesso forense), the
+endpoint returns a small `text/html` error page instead — we detect that and
+record the date as skipped.
+"""
+from __future__ import annotations
+
+import http.cookiejar
 import logging
 import time
-from pathlib import Path
-from typing import Optional, Dict, List
+import urllib.error
+import urllib.request
+from datetime import datetime, timedelta
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional
+
+from poursuite.config import COURT_DOCS_DIR
+from poursuite.utils import setup_logging
+
 
 @dataclass
 class Caderno:
@@ -17,210 +39,151 @@ class Caderno:
     value: str
     name: str
 
+
 class TJSPScraper:
-    """Handles document downloading from TJSP website."""
+    """Downloads DJE PDFs by hitting the download endpoint directly."""
 
     BASE_URL = "https://dje.tjsp.jus.br/cdje"
-    BASE_DIR = Path("C:/Poursuite/CourtDocs")
+    DOWNLOAD_URL = BASE_URL + "/downloadCaderno.do"
+    BASE_DIR = COURT_DOCS_DIR
+
+    USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    )
+    REQUEST_TIMEOUT_SECONDS = 60
+    PDF_CONTENT_TYPE_PREFIX = "application/octet-stream"
 
     CADERNOS = [
         Caderno("12", "Judicial_Capital_1"),
         Caderno("20", "Judicial_Capital_2"),
         Caderno("18", "Judicial_Interior_1"),
         Caderno("13", "Judicial_Interior_2"),
-        Caderno("15", "Judicial_Interior_3")
+        Caderno("15", "Judicial_Interior_3"),
     ]
 
     def __init__(self):
-        """Initialize the scraper with Chrome options and logging setup."""
-        self._setup_logging()
-        self._setup_browser()
+        self.logger = setup_logging("tjsp_scraper")
+        self.BASE_DIR.mkdir(parents=True, exist_ok=True)
+        self._opener: Optional[urllib.request.OpenerDirector] = None
 
-    def _setup_logging(self):
-        """Configure logging with both file and console output."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler('tjsp_scraper.log'),
-                logging.StreamHandler()
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
+    def _get_opener(self) -> urllib.request.OpenerDirector:
+        """Build a session-bearing opener; primes JSESSIONID by hitting the index page."""
+        if self._opener is not None:
+            return self._opener
+        cj = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+        opener.addheaders = [("User-Agent", self.USER_AGENT)]
+        try:
+            with opener.open(self.BASE_URL, timeout=self.REQUEST_TIMEOUT_SECONDS) as r:
+                r.read(0)  # discard body; we only want cookies
+            cookie_names = sorted(c.name for c in cj)
+            self.logger.info(f"Session primed; cookies: {cookie_names}")
+        except Exception as e:
+            self.logger.error(f"Failed to prime session: {e}")
+            raise
+        self._opener = opener
+        return opener
 
-    def _setup_browser(self):
-        """Configure and initialize Chrome WebDriver."""
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")  # Run in background
-        prefs = {
-            "download.default_directory": str(self.BASE_DIR),
-            "download.prompt_for_download": False,
-            "download.directory_upgrade": True,
-            "plugins.always_open_pdf_externally": True
-        }
-        chrome_options.add_experimental_option("prefs", prefs)
-
-        self.driver = webdriver.Chrome(options=chrome_options)
-        self.wait = WebDriverWait(self.driver, 10)
-
-    def _is_valid_date(self, date: datetime) -> bool:
-        """Check if date is valid for downloading (not weekend or future)."""
-        today = datetime.now()
-
-        if date > today:
-            self.logger.warning(f"Skipping future date: {date.strftime('%d/%m/%Y')}")
+    @staticmethod
+    def _is_valid_date(d: datetime, today: datetime) -> bool:
+        """Pre-filter dates the endpoint will refuse anyway (future + weekends)."""
+        if d > today:
             return False
-
-        if date.weekday() >= 5:  # Saturday = 5, Sunday = 6
-            self.logger.warning(f"Skipping weekend date: {date.strftime('%d/%m/%Y')}")
+        if d.weekday() >= 5:  # Saturday=5, Sunday=6
             return False
-
         return True
 
-    def _create_date_directory(self, date: datetime) -> Path:
-        """Create and return path for year/month directory structure."""
-        year_dir = self.BASE_DIR / str(date.year)
-        month_dir = year_dir / f"{date.month:02d}"
-        month_dir.mkdir(parents=True, exist_ok=True)
-        return month_dir
+    def _date_directory(self, d: datetime) -> Path:
+        """Final on-disk location: BASE_DIR/<year>/<MM>/."""
+        out = self.BASE_DIR / str(d.year) / f"{d.month:02d}"
+        out.mkdir(parents=True, exist_ok=True)
+        return out
 
-    def _set_date(self, date: datetime) -> bool:
-        """Set date in the website's date field using JavaScript."""
-        try:
-            date_str = date.strftime("%d/%m/%Y")
-            self.driver.execute_script(
-                f"document.getElementById('dtDiarioCad').value = '{date_str}';"
-            )
+    def _download_one(self, caderno: Caderno, d: datetime) -> bool:
+        """Download a single caderno PDF for a given date. True on success/already-present."""
+        date_label = d.strftime("%d/%m/%Y")
+        date_stem = d.strftime("%Y%m%d")
+        out_path = self._date_directory(d) / f"{date_stem}_{caderno.name}.pdf"
+
+        if out_path.exists():
+            self.logger.debug(f"Already on disk: {out_path.name}")
             return True
-        except Exception as e:
-            self.logger.error(f"Error setting date {date_str}: {e}")
-            return False
 
-    def _download_caderno(self, caderno: Caderno, date: datetime) -> bool:
-        """
-        Download and move a specific caderno (document) for a given date.
-        Includes retry logic and file lock checking.
-        """
+        url = (
+            f"{self.DOWNLOAD_URL}"
+            f"?dtDiario={date_label.replace('/', '%2F')}"
+            f"&cdCaderno={caderno.value}"
+            f"&tpDownload=D"
+        )
+
+        opener = self._get_opener()
         try:
-            # Select the document type
-            select_element = self.wait.until(
-                EC.presence_of_element_located((By.ID, "cadernosCad"))
-            )
-            Select(select_element).select_by_value(caderno.value)
-
-            # Get directory for final file location
-            final_dir = self._create_date_directory(date)
-            date_str = date.strftime("%Y%m%d")
-            final_file = final_dir / f"{date_str}_{caderno.name}.pdf"
-
-            # If the final file already exists, skip download
-            if final_file.exists():
-                self.logger.info(f"File {final_file.name} already exists, skipping download")
-                return True
-
-            # Before downloading, check if any "caderno" PDF exists in BASE_DIR
-            existing_files = list(self.BASE_DIR.glob("caderno*.pdf"))
-
-            # Click download button
-            download_button = self.wait.until(
-                EC.element_to_be_clickable((By.ID, "download"))
-            )
-            download_button.click()
-
-            # Wait for new file to appear in BASE_DIR
-            download_timeout = 10
-            while download_timeout > 0:
-                current_files = list(self.BASE_DIR.glob("caderno*.pdf"))
-                new_files = [f for f in current_files if f not in existing_files]
-
-                if new_files:
-                    downloaded_file = new_files[0]  # Get the first new file
-
-                    # Try to move the file with retry logic
-                    move_timeout = 10
-                    while move_timeout > 0:
-                        try:
-                            # Check if file is locked
-                            with open(downloaded_file, 'rb'):
-                                pass
-
-                            # If we can open it, try to move it
-                            downloaded_file.rename(final_file)
-                            self.logger.info(f"Successfully downloaded and moved {final_file.name}")
-                            return True
-
-                        except PermissionError:
-                            # File is still locked, wait and retry
-                            self.logger.debug(f"File {downloaded_file.name} is locked, retrying in 1 second")
-                            time.sleep(1)
-                            move_timeout -= 1
-                            continue
-
-                        except FileExistsError:
-                            # If file already exists at destination, consider it a success
-                            self.logger.info(f"File {final_file.name} already exists at destination")
-                            downloaded_file.unlink()  # Delete the duplicate download
-                            return True
-
-                        except Exception as move_error:
-                            self.logger.error(f"Unexpected error moving file: {move_error}")
-                            return False
-
-                    self.logger.error(f"Failed to move file after {10 - move_timeout} attempts")
+            with opener.open(url, timeout=self.REQUEST_TIMEOUT_SECONDS) as resp:
+                ct = (resp.headers.get("Content-Type") or "").lower()
+                if not ct.startswith(self.PDF_CONTENT_TYPE_PREFIX):
+                    # The endpoint returns a small text/html page when there's no
+                    # publication for the date (weekend caught past our pre-filter,
+                    # holiday, recesso forense). Treat as a non-fatal skip.
+                    body_preview = resp.read(200)
+                    self.logger.info(
+                        f"No PDF for {caderno.name} on {date_label} "
+                        f"(Content-Type={ct!r}); preview={body_preview[:80]!r}"
+                    )
                     return False
 
-                time.sleep(1)
-                download_timeout -= 1
-
-            self.logger.error(f"Download failed or timed out for {caderno.name}")
+                tmp_path = out_path.with_suffix(out_path.suffix + ".part")
+                with open(tmp_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(64 * 1024)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                tmp_path.replace(out_path)
+                self.logger.info(f"Downloaded {out_path.name}")
+                return True
+        except urllib.error.URLError as e:
+            self.logger.error(f"Network error fetching {caderno.name} for {date_label}: {e}")
             return False
-
         except Exception as e:
-            self.logger.error(f"Error downloading {caderno.name}: {e}")
+            self.logger.error(f"Unexpected error fetching {caderno.name} for {date_label}: {e}")
             return False
 
     def download_documents(self, start_date: str, end_date: Optional[str] = None) -> Dict[str, List[str]]:
-        """Download documents for a date range."""
-        results = {
-            "successful": [],
-            "failed": []
-        }
+        """Download every caderno for every business day in [start_date, end_date]."""
+        results: Dict[str, List[str]] = {"successful": [], "failed": []}
         try:
-            # Parse dates
             start = datetime.strptime(start_date, "%d/%m/%Y")
             end = datetime.strptime(end_date, "%d/%m/%Y") if end_date else start
-            current = start
-            while current <= end:
-                if self._is_valid_date(current):
-                    self.driver.get(self.BASE_URL)
-                    if self._set_date(current):
-                        for caderno in self.CADERNOS:
-                            date_str = current.strftime("%d/%m/%Y")
-                            if self._download_caderno(caderno, current):
-                                results["successful"].append(f"{caderno.name}_{date_str}")
-                            else:
-                                results["failed"].append(f"{caderno.name}_{date_str}")
-                    else:
-                        results["failed"].append(f"All documents for {current.strftime('%d/%m/%Y')}")
+        except ValueError as e:
+            self.logger.error(f"Invalid date format (expected DD/MM/YYYY): {e}")
+            return results
+
+        today = datetime.now()
+        current = start
+        while current <= end:
+            label = current.strftime("%d/%m/%Y")
+            if not self._is_valid_date(current, today):
+                self.logger.info(f"Skipping {label} (weekend or future)")
                 current += timedelta(days=1)
+                continue
+            for caderno in self.CADERNOS:
+                key = f"{caderno.name}_{label}"
+                if self._download_one(caderno, current):
+                    results["successful"].append(key)
+                else:
+                    results["failed"].append(key)
+                # Light pacing to avoid hammering the server
+                time.sleep(0.2)
+            current += timedelta(days=1)
 
-        except Exception as e:
-            self.logger.error(f"Error in download_documents: {e}")
-        finally:
-            self.driver.quit()
-
+        self.logger.info(
+            f"Done. {len(results['successful'])} successful, {len(results['failed'])} failed/skipped."
+        )
         return results
 
 
 if __name__ == "__main__":
-    # Example usage
     scraper = TJSPScraper()
-
-    # Download single date
-    #results = scraper.download_documents("15/01/2024")
-
-    # Download date range
-    results = scraper.download_documents("01/01/2013", "31/12/2014")
-
-    print("\nSuccessful downloads:", len(results["successful"]))
-    print("Failed downloads:", len(results["failed"]))
+    out = scraper.download_documents("16/05/2024")
+    print(f"Successful: {len(out['successful'])}; failed/skipped: {len(out['failed'])}")
