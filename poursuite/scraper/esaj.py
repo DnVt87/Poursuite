@@ -19,22 +19,11 @@ from poursuite.config import (
     PROCESS_NUMBER_PATTERN_STRICT,
 )
 from poursuite.models import ProcessData
+from poursuite.scraper._chrome import configure_chrome_options
+from poursuite.scraper.cnj_origem import derive_from_cnj
 from poursuite.utils import format_currency, setup_logging
 
 logger = setup_logging("tjsp_scraper")
-
-
-def _configure_chrome_options() -> webdriver.ChromeOptions:
-    """Configure headless Chrome options."""
-    options = webdriver.ChromeOptions()
-    options.add_argument("--headless")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--log-level=3")          # suppress INFO/WARNING/ERROR logs
-    options.add_argument("--disable-logging")
-    options.add_experimental_option("excludeSwitches", ["enable-logging"])
-    return options
 
 
 class ProcessValueScraper:
@@ -47,11 +36,27 @@ class ProcessValueScraper:
         "value": {"type": "div", "id": "valorAcaoProcesso"},
         "last_movement": {"type": "td", "class_": "dataMovimentacao"},
         "status": {"type": "span", "id": "labelSituacaoProcesso", "class_": "unj-tag"},
+        # Phase 1: additional header fields with stable IDs (foro/vara/juiz in
+        # the primary panel; controle/area inside #maisDetalhes).
+        "foro": {"type": "span", "id": "foroProcesso"},
+        "vara": {"type": "span", "id": "varaProcesso"},
+        "juiz": {"type": "span", "id": "juizProcesso"},
+        "controle": {"type": "div", "id": "numeroControleProcesso"},
+        "area": {"type": "div", "id": "areaProcesso"},
+    }
+
+    # Phase 1: header fields that have NO id on the value div — only a
+    # preceding <span class="unj-label">{label}</span> sibling. Extracted
+    # by label-text match. Rare fields, conditionally rendered.
+    LABEL_FIELDS = {
+        "outros_assuntos": "Outros assuntos",
+        "outros_numeros": "Outros números",
+        "local_fisico": "Local Físico",
     }
 
     def __init__(self, max_concurrent_browsers: int = 4) -> None:
         self.max_concurrent_browsers = max_concurrent_browsers
-        self.options = _configure_chrome_options()
+        self.options = configure_chrome_options()
         ESAJ_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         self._drivers: Dict[int, webdriver.Chrome] = {}
         self._driver_lock = threading.Lock()
@@ -149,7 +154,14 @@ class ProcessValueScraper:
         return element is not None and ESAJ_SEALED_TEXT.lower() in element.text.lower()
 
     def _extract_field(self, soup: BeautifulSoup, config: dict) -> Optional[str]:
-        element = soup.find(config["type"], id=config.get("id"), class_=config.get("class_"))
+        # Build find() kwargs explicitly — passing class_=None excludes
+        # elements with any class attribute (contrary to BS4 docs).
+        find_kwargs = {}
+        if "id" in config:
+            find_kwargs["id"] = config["id"]
+        if "class_" in config:
+            find_kwargs["class_"] = config["class_"]
+        element = soup.find(config["type"], **find_kwargs)
         if not element:
             return None
         value = element.text.strip()
@@ -158,6 +170,29 @@ class ProcessValueScraper:
         if "slice" in config:
             value = value[config["slice"]]
         return value
+
+    @staticmethod
+    def _extract_field_by_label(soup: BeautifulSoup, label_text: str) -> Optional[str]:
+        """Find a `<span class="unj-label">{label_text}</span>` and return the
+        text of the immediately-following sibling element.
+
+        Used for header fields that eSAJ renders without an id on the value
+        div (Outros assuntos, Outros números, Local Físico). Returns None
+        when the label isn't present — these fields are conditionally
+        rendered (1-5 cases out of 13 in the inventory pass).
+        """
+        label_el = soup.find(
+            "span",
+            class_="unj-label",
+            string=lambda s: s is not None and s.strip() == label_text,
+        )
+        if label_el is None:
+            return None
+        sibling = label_el.find_next_sibling()
+        if sibling is None:
+            return None
+        text = sibling.get_text(" ", strip=True)
+        return text or None
 
     @staticmethod
     def _extract_parties(soup: BeautifulSoup):
@@ -170,13 +205,27 @@ class ProcessValueScraper:
         )
 
     def _extract_process_data(self, soup: BeautifulSoup, process_number: str) -> ProcessData:
-        # Check for sealed case before attempting field extraction
+        # Check for sealed case before attempting field extraction.
+        # Note: derived fields (foro_code, tribunal_code, distribution_year)
+        # are populated even for sealed cases — they come from the process
+        # number itself, not from the page.
+        derived = derive_from_cnj(process_number)
         if self._is_sealed_case(soup):
-            return ProcessData(number=process_number, error="Segredo de justiça")
+            return ProcessData(
+                number=process_number,
+                error="Segredo de justiça",
+                foro_code=derived["foro_code"],
+                tribunal_code=derived["tribunal_code"],
+                distribution_year=derived["distribution_year"],
+            )
         try:
             data = {
                 field: self._extract_field(soup, config)
                 for field, config in self.FIELD_MAPPINGS.items()
+            }
+            label_data = {
+                field: self._extract_field_by_label(soup, label)
+                for field, label in self.LABEL_FIELDS.items()
             }
             plaintiff, defendant = self._extract_parties(soup)
             return ProcessData(
@@ -190,6 +239,17 @@ class ProcessValueScraper:
                 plaintiff=plaintiff,
                 defendant=defendant,
                 other_processes=None,
+                foro=data["foro"],
+                vara=data["vara"],
+                juiz=data["juiz"],
+                controle=data["controle"],
+                outros_assuntos=label_data["outros_assuntos"],
+                outros_numeros=label_data["outros_numeros"],
+                local_fisico=label_data["local_fisico"],
+                area=data["area"],
+                foro_code=derived["foro_code"],
+                tribunal_code=derived["tribunal_code"],
+                distribution_year=derived["distribution_year"],
                 error=None,
             )
         except Exception as e:
@@ -212,8 +272,15 @@ class ProcessValueScraper:
             self._wait_for_results(driver)
 
             try:
+                # Target the header expand-collapse anchor specifically. The
+                # page also renders "Mais" links for `#linkpartes` and
+                # `#linkmovimentacoes` — the previous LINK_TEXT match was
+                # ambiguous. See poursuite/probes/esaj_inventory.py for the
+                # full enumeration.
                 mais = WebDriverWait(driver, 5).until(
-                    EC.element_to_be_clickable((By.LINK_TEXT, "Mais"))
+                    EC.element_to_be_clickable(
+                        (By.CSS_SELECTOR, "a[href='#maisDetalhes']")
+                    )
                 )
                 driver.execute_script("arguments[0].click();", mais)
                 try:
