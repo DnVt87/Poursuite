@@ -1,0 +1,9 @@
+# Default sample TJSP process numbers for the DataJud probe.
+# Span the coverage edges (oldest -> newest) and forum tier (capital vs. mid-tier).
+samples:
+  - "1018045-50.2015.8.26.0506"   # 2015 mid-tier
+  - "0141625-04.2009.8.26.0100"   # 2009 capital
+  - "1002273-51.2024.8.26.0629"   # 2024 recent
+  - "0700505-13.1990.8.26.0547"   # 1990 — coverage edge
+  - "1185179-78.2023.8.26.0100"   # 2023 capital
+  - "1046043-29.2020.8.26.0114"   # 2020 mid-tier

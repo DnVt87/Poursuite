@@ -1,0 +1,80 @@
+# Receita CNPJ Bulk Schema — v0 baseline.
+#
+# This file mirrors the column lists in PROBE_FINDINGS.md §2.4 (which itself
+# summarizes cnpj-metadados.pdf). The schema-check probe diffs THIS file
+# against EXPECTED_SCHEMA in poursuite/probes/receita.py.
+#
+# To do a meaningful drift check:
+#   1. Fetch the latest cnpj-metadados.pdf from Receita Federal.
+#   2. Replace the column lists below with a fresh transcription.
+#   3. Re-run:  python -m poursuite.probes receita --schema-check
+# Any column added/removed/renamed since PROBE_FINDINGS §2.4 will surface as
+# "missing" or "extra" entries in the diff report.
+#
+# Format:
+#   [table_name]
+#   column_a
+#   column_b   # inline comments are allowed; only the first token is the column
+
+[empresas]
+cnpj_basico
+razao_social
+natureza_juridica
+qualificacao_responsavel
+capital_social
+porte_empresa
+ente_federativo_responsavel
+
+[estabelecimentos]
+cnpj_basico
+cnpj_ordem
+cnpj_dv
+identificador_matriz_filial
+nome_fantasia
+situacao_cadastral
+data_situacao_cadastral
+motivo_situacao_cadastral
+nome_cidade_exterior
+pais
+data_inicio_atividade
+cnae_fiscal_principal
+cnae_fiscal_secundaria
+tipo_logradouro
+logradouro
+numero
+complemento
+bairro
+cep
+uf
+municipio
+ddd_1
+telefone_1
+ddd_2
+telefone_2
+ddd_fax
+fax
+correio_eletronico
+situacao_especial
+data_situacao_especial
+
+[socios]
+cnpj_basico
+identificador_socio
+nome_socio
+cnpj_cpf_socio
+qualificacao_socio
+data_entrada_sociedade
+pais
+cpf_representante_legal
+nome_representante_legal
+qualificacao_representante_legal
+faixa_etaria
+
+[dados_simples]
+cnpj_basico
+opcao_simples
+data_opcao_simples
+data_exclusao_simples
+opcao_mei
+data_opcao_mei
+data_exclusao_mei

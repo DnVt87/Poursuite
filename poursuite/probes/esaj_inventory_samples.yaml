@@ -1,0 +1,124 @@
+# eSAJ Full Inventory — sample TJSP process numbers.
+#
+# Each entry:
+#   number:           CNJ-formatted process number
+#   source:           "operator" (provided by user)
+#                     "gap-filler" (added by Claude Code to fill an archetype gap)
+#                     "candidate" (added to expand class/section diversity beyond the 10 archetypes)
+#   target_archetype: declared archetype this case is expected to represent.
+#                     The walker captures empirical observations per case in Section 2 of
+#                     the report so the operator can verify whether the case actually fits.
+#                     The Archetype coverage check in the report uses these declarations
+#                     directly (no auto-classification — see CLAUDE_CODE_BRIEF_VIEWPORT_AND_RERUN.md).
+#
+# Conceptual archetypes (per CLAUDE_CODE_BRIEF_ESAJ_INVENTORY_v2.md §"Test set"):
+#   1. Execução de título extrajudicial
+#   2. Cumprimento de sentença
+#   3. Execução fiscal
+#   4. Multi-party (>2 polos)
+#   5. Sealed (segredo de justiça)
+#   6. Migrated/legacy (pre-2010)
+#   7. Recent case still in citação phase
+#   8. Case with active penhora movimento
+#   9. Case with embargos à execução / linked processes
+#  10. High-volume movimentações (>200 movimentos)
+
+samples:
+  # ----- Operator-provided cases -----
+  # Empirical observations from the diagnostic re-run (esaj_inventory_20260510T131430Z)
+  # are used below to declare each case's most-distinctive archetype.
+
+  # Default execução de título extrajudicial.
+  - number: "1033164-10.2022.8.26.0602"
+    source: "operator"
+    target_archetype: "Execução de título extrajudicial"
+
+  # Penhora + citação observed in Movimentações.
+  - number: "1063559-02.2023.8.26.0100"
+    source: "operator"
+    target_archetype: "Case with active penhora movimento"
+
+  # 470 movimentos, also has penhora — declared as high-volume since that's
+  # the harder archetype to populate.
+  - number: "1002177-13.2020.8.26.0100"
+    source: "operator"
+    target_archetype: "High-volume movimentações (>200 movimentos)"
+
+  # Citação term observed in Movimentações, no penhora yet (closest match in
+  # the operator set; 2023 is borderline-recent — operator may want to swap
+  # for a 2025/2026 case if available).
+  - number: "1185092-25.2023.8.26.0100"
+    source: "operator"
+    target_archetype: "Recent case still in citação phase"
+
+  - number: "1005405-88.2023.8.26.0100"
+    source: "operator"
+    target_archetype: "Execução de título extrajudicial"
+
+  - number: "1004813-32.2019.8.26.0020"
+    source: "operator"
+    target_archetype: "Execução de título extrajudicial"
+
+  - number: "1105144-39.2020.8.26.0100"
+    source: "operator"
+    target_archetype: "Execução de título extrajudicial"
+
+  # Non-empty Apensos, Entranhados e Unificados section observed.
+  - number: "1121786-92.2017.8.26.0100"
+    source: "operator"
+    target_archetype: "Case with embargos à execução / linked processes"
+
+  # Bloqueio + sisbajud observed in Movimentações.
+  - number: "1045075-07.2021.8.26.0100"
+    source: "operator"
+    target_archetype: "Case with active penhora movimento"
+
+  - number: "1014358-56.2020.8.26.0032"
+    source: "operator"
+    target_archetype: "Execução de título extrajudicial"
+
+  # ----- Gap fillers -----
+  # Pre-2010 / migrated-from-legacy. Originally added because no operator case
+  # was pre-2010. Empirically: Inventário (not execução), so it doubles as a
+  # different-class sample, and it's a TJSP case (foro 0547 = Saltinho).
+  - number: "0700505-13.1990.8.26.0547"
+    source: "gap-filler"
+    target_archetype: "Migrated/legacy (pre-2010)"
+
+  # Second pre-2010 example (2009 capital). Sourced from PROBE_FINDINGS.md's
+  # DataJud sample list. Empirically: Execução de Título Extrajudicial AND
+  # exposes a NEW section "Histórico de classes" that no other case shows —
+  # this is the most valuable gap-filler addition for the inventory.
+  - number: "0141625-04.2009.8.26.0100"
+    source: "gap-filler"
+    target_archetype: "Migrated/legacy (pre-2010)"
+
+  # Multi-party candidate — 2024 Procedimento Comum Cível, foro 0629, with 9
+  # rows in the Partes section (highest in any tested case). Verified loaded
+  # successfully. Also a different Classe than every other sample, so doubles
+  # as class-diversity coverage.
+  - number: "1002273-51.2024.8.26.0629"
+    source: "gap-filler"
+    target_archetype: "Multi-party (>2 polos)"
+
+# ----- Unfilled archetypes (sourcing notes) -----
+#
+# The following 3 archetypes could not be sourced as public TJSP cases by
+# Claude Code via web search:
+#
+#   - Cumprimento de sentença
+#   - Execução fiscal
+#   - Sealed (segredo de justiça)
+#
+# Difficulty:
+#   - JusBrasil (the largest public Brazilian case-law index) consistently
+#     redacts the first 7 digits of CNJ process numbers (`XXXXX-DD.YYYY.8.26.OOOO`),
+#     making it impossible to construct a valid lookup number from search results.
+#   - TJSP press releases reference cases without quoting full CNJ numbers.
+#   - Sealed (segredo de justiça) cases are sealed BY DESIGN — public examples
+#     are not findable without operator/lawyer prior knowledge.
+#
+# Recommended operator follow-up: provide one known case number per missing
+# archetype if available; otherwise the inventory proceeds without these
+# specific archetypes filled. Field/section findings from the existing 13
+# cases already cover the structural patterns.
