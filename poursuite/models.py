@@ -88,6 +88,8 @@ class Movimento:
     See poursuite/scraper/movimentos.py for the parser that produces these.
     eSAJ's DOM exposes nome and complementos text but not the TPU `codigo` —
     `codigo` stays NULL until enriched by Layer 3 (DataJud).
+    `cd_documento` is the eSAJ document ID (from `<a class="linkMovVincProc">`)
+    used by Phase 3 deep-search; NULL when the movimento has no linked doc.
     """
     ordem: int
     data_hora: Optional[str] = None      # ISO 8601 date if parseable, raw DD/MM/YYYY otherwise
@@ -95,6 +97,41 @@ class Movimento:
     nome: str = ""
     complementos_json: Optional[str] = None
     complementos_text: Optional[str] = None
+    cd_documento: Optional[str] = None   # eSAJ doc ID for Phase 3 deep-search
+
+    def to_dict(self) -> Dict:
+        return asdict(self)
+
+
+@dataclass
+class LinkedProcess:
+    """One linked process from the Apensos or Incidentes section.
+
+    `relationship_type` is the section-level type (`apenso` for the
+    Apensos/Entranhados/Unificados section, `incidente` for the
+    Incidentes/Recursos/Execuções section). Finer-grained types
+    (entranhado/unificado, recurso/execucao_sentenca) require structural
+    cues eSAJ doesn't currently expose; deferred.
+    """
+    linked_number: str
+    relationship_type: str
+
+    def to_dict(self) -> Dict:
+        return asdict(self)
+
+
+@dataclass
+class Peticao:
+    """One petição from the Petições diversas section.
+
+    Date + type as displayed. `cd_documento` is reserved for forward compat —
+    eSAJ doesn't currently expose document IDs on the petição row (the IDs
+    live on movimento rows), but the column is kept in case eSAJ adds them.
+    """
+    ordem: int
+    data: Optional[str] = None
+    tipo: Optional[str] = None
+    cd_documento: Optional[str] = None  # currently always None; see docstring
 
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -102,18 +139,16 @@ class Movimento:
 
 @dataclass
 class ScrapeResult:
-    """Outcome of one full eSAJ scrape: header data plus deep extractions.
-
-    Used by ProcessValueScraper.get_process_record / process_batch_records,
-    which return movimentos alongside the header. Phase 2d will add
-    linked_processes and peticoes fields. Existing callers that only want
-    the header continue to use get_process_data / process_batch.
-    """
+    """Outcome of one full eSAJ scrape: header data plus deep extractions."""
     process_data: ProcessData
     movimentos: List["Movimento"] = field(default_factory=list)
+    linked_processes: List["LinkedProcess"] = field(default_factory=list)
+    peticoes: List["Peticao"] = field(default_factory=list)
 
     def to_dict(self) -> Dict:
         return {
             "process_data": self.process_data.to_dict(),
             "movimentos": [m.to_dict() for m in self.movimentos],
+            "linked_processes": [lp.to_dict() for lp in self.linked_processes],
+            "peticoes": [p.to_dict() for p in self.peticoes],
         }

@@ -33,7 +33,7 @@ from poursuite.utils import setup_logging
 
 SCHEMA_PATH = Path(__file__).parent / "esaj_schema.sql"
 DEFAULT_DB_PATH: Path = DB_DIR / "esaj_snapshots.db"
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 # Field names from ProcessData that map 1:1 to dedicated columns on
 # process_snapshot. Excludes `number` (becomes process_number) and
@@ -162,7 +162,16 @@ class SnapshotStore:
     # ─────────────────────────────────────────────────────────────────
 
     def _init_schema(self) -> None:
-        """Apply schema.sql if the DB is at version 0 (fresh)."""
+        """Initialize or migrate the snapshot store schema.
+
+        Fresh DB (version=0): apply the bundled esaj_schema.sql (the v1
+        baseline) and then run any v2+ migrations.
+
+        Existing v1 DB: skip the baseline and run v2+ migrations only.
+
+        Migrations live in `_apply_migration`. The pattern scales to
+        future versions: bump CURRENT_SCHEMA_VERSION and add a branch.
+        """
         with self._lock:
             cur = self._conn.cursor()
             cur.execute(
@@ -177,17 +186,48 @@ class SnapshotStore:
             current = cur.fetchone()[0]
             if current >= CURRENT_SCHEMA_VERSION:
                 return
-            schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
-            cur.executescript(schema_sql)
-            cur.execute(
-                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
-                (CURRENT_SCHEMA_VERSION, _utc_now_iso()),
-            )
+
+            if current == 0:
+                # Fresh DB: apply the v1 baseline from schema.sql.
+                schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
+                cur.executescript(schema_sql)
+                cur.execute(
+                    "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                    (1, _utc_now_iso()),
+                )
+                current = 1
+                self.logger.info(
+                    "Initialized esaj snapshot store schema v1 at %s", self.db_path,
+                )
+
+            # Apply each missing migration in sequence.
+            while current < CURRENT_SCHEMA_VERSION:
+                next_v = current + 1
+                self._apply_migration(cur, next_v)
+                cur.execute(
+                    "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                    (next_v, _utc_now_iso()),
+                )
+                self.logger.info(
+                    "Migrated esaj snapshot store schema v%d -> v%d", current, next_v,
+                )
+                current = next_v
             self._conn.commit()
-            self.logger.info(
-                "Initialized esaj snapshot store schema v%d at %s",
-                CURRENT_SCHEMA_VERSION, self.db_path,
-            )
+
+    def _apply_migration(self, cur: sqlite3.Cursor, version: int) -> None:
+        """Apply the migration that brings the schema from version-1 to `version`.
+
+        Each migration must be idempotent or guard against re-application,
+        since SQLite has no transactional DDL — a half-applied migration on
+        crash recovery would need manual cleanup.
+        """
+        if version == 2:
+            # Phase 2d: cd_documento column on movimento. Carries the eSAJ
+            # document ID (from <a class="linkMovVincProc" href="...?cdDocumento=...">)
+            # so Phase 3 deep-search can fetch the PDFs directly.
+            cur.execute("ALTER TABLE movimento ADD COLUMN cd_documento TEXT")
+            return
+        raise RuntimeError(f"Unknown migration version: {version}")
 
     def schema_version(self) -> int:
         cur = self._conn.cursor()
@@ -287,8 +327,9 @@ class SnapshotStore:
                         """
                         INSERT INTO movimento (
                             process_number, snapshot_ts, ordem, data_hora,
-                            codigo, nome, complementos_json, complementos_text
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            codigo, nome, complementos_json, complementos_text,
+                            cd_documento
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         [
                             (
@@ -300,6 +341,7 @@ class SnapshotStore:
                                 m.get("nome"),
                                 m.get("complementos_json"),
                                 m.get("complementos_text"),
+                                m.get("cd_documento"),
                             )
                             for m in movimentos
                         ],

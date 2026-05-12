@@ -72,6 +72,8 @@ def _run_extraction(
                 snapshot_store.save_snapshot(
                     process_data=result.process_data,
                     movimentos=[m.to_dict() for m in result.movimentos],
+                    linked=[lp.to_dict() for lp in result.linked_processes],
+                    peticoes=[p.to_dict() for p in result.peticoes],
                 )
             except Exception:
                 logger.exception(
@@ -79,8 +81,8 @@ def _run_extraction(
                     result.process_data.number,
                 )
         # The in-memory result is the header dict — UI doesn't render movimentos
-        # yet. Movimentos are persisted; the query API endpoints (2e) will
-        # surface them.
+        # yet. Movimentos / linked / petições are persisted; the query API
+        # endpoints (2e) will surface them.
         with _jobs_lock:
             _jobs[job_id]["results"].append(result.process_data.to_dict())
             _jobs[job_id]["done"] += 1

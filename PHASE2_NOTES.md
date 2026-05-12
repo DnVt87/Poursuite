@@ -62,11 +62,15 @@ The inventory probe's per-section row count (e.g. `Movimentações: tables=1 (ro
 
 **Production parser deduplicates by reading only `#tabelaTodasMovimentacoes`.** See `parse_movimentos` in [poursuite/scraper/movimentos.py](poursuite/scraper/movimentos.py). The parser's count is the canonical "real" movimento count.
 
-**Implication:** when reading the May-10 inventory_report.md, treat row counts as N+6 for the Movimentações section specifically. The inventory's row counts on other sections (Partes, Petições, Incidentes, Apensos, Audiências) don't have this issue — those sections have a single tbody.
+**Implication:** when reading the May-10 inventory_report.md, treat Movimentações row counts as N+6. Petições / Apensos / Incidentes / Audiências overcount by **+1** per case from the same root cause: a `<tr class="fundoEscuro" height="2">` thead spacer with empty `<td>` cells that the inventory walker counts as a data row. Smaller magnitude than Movimentações (no second-tbody duplication) but same pattern — the production parsers (`parse_peticoes`, `parse_linked`) skip the thead and are canonical.
 
 ### Pagination remains unverified
 
 All 16 cases tested in 2c had <500 movimentos and rendered in a single page. Whether eSAJ paginates movimentos at higher counts is **unproven**. The parser logs a WARNING via `is_full_timeline(soup) → False` when `#tabelaTodasMovimentacoes` isn't present after the expand click; this is the safety net. When production hits a case where this warning fires, treat it as a finding to investigate, not a bug to silence.
+
+### `linked_process.relationship_type` granularity is section-level only
+
+The brief listed candidate values `{apenso, incidente, dependente, embargos, ...}` mixing section names and content classifications. In 2d we settled on **section-level only**: `"apenso"` for any row in the Apensos/Entranhados/Unificados section, `"incidente"` for any row in the Incidentes/Recursos/Execuções section. Finer subtypes (entranhado vs unificado, recurso vs execução-de-sentença, embargos vs IDPJ) would require columnar data eSAJ doesn't expose — the Apensos table has columns for Classe of the linked process, Apensamento date, and Motivo, but no column for which of {apenso, entranhado, unificado} applies to *this* relationship. The Classe column tells us what the linked process IS, not what the relationship TO it is. Refinement is feasible later if a query rule wants finer types, but the linkage data needed isn't in eSAJ's current DOM.
 
 ### Decisions locked in v3 PLAN.md and shipped in 2a-2c
 

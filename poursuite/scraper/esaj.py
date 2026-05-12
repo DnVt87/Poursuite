@@ -18,10 +18,18 @@ from poursuite.config import (
     ESAJ_URL,
     PROCESS_NUMBER_PATTERN_STRICT,
 )
-from poursuite.models import Movimento, ProcessData, ScrapeResult
+from poursuite.models import (
+    LinkedProcess,
+    Movimento,
+    Peticao,
+    ProcessData,
+    ScrapeResult,
+)
 from poursuite.scraper._chrome import configure_chrome_options
 from poursuite.scraper.cnj_origem import derive_from_cnj
+from poursuite.scraper.linked import parse_linked
 from poursuite.scraper.movimentos import is_full_timeline, parse_movimentos
+from poursuite.scraper.peticoes import parse_peticoes
 from poursuite.scraper.sections import expand_section_collapsibles
 from poursuite.utils import format_currency, setup_logging
 
@@ -350,30 +358,40 @@ class ProcessValueScraper:
             process_data = self._extract_process_data(soup, process_number)
 
             movimentos: List[Movimento] = []
+            linked: List[LinkedProcess] = []
+            peticoes: List[Peticao] = []
             if include_movimentos and not process_data.error:
                 # Expose tabelaTodasMovimentacoes by clicking the section toggle.
                 clicked = expand_section_collapsibles(driver, ids=("linkmovimentacoes",))
                 # Re-parse the page after the expand.
-                movs_soup = BeautifulSoup(driver.page_source, "html.parser")
-                if not is_full_timeline(movs_soup):
+                page_soup = BeautifulSoup(driver.page_source, "html.parser")
+                if not is_full_timeline(page_soup):
                     logger.warning(
                         "movimentos: full timeline not loaded for %s "
                         "(linkmovimentacoes expand: %s) — parsing visible subset",
                         process_number, clicked,
                     )
-                movimentos = parse_movimentos(movs_soup)
+                movimentos = parse_movimentos(page_soup)
+                # Linked processes (apensos + incidentes) and petições live
+                # in static sections — same soup, no extra clicks.
+                linked = parse_linked(page_soup)
+                peticoes = parse_peticoes(page_soup)
 
             if include_other_processes and process_data.defendant and not process_data.error:
                 process_data.other_processes = self._get_other_processes_count(
                     driver, process_data.defendant
                 )
 
-            return ScrapeResult(process_data=process_data, movimentos=movimentos)
+            return ScrapeResult(
+                process_data=process_data,
+                movimentos=movimentos,
+                linked_processes=linked,
+                peticoes=peticoes,
+            )
 
         except Exception as e:
             return ScrapeResult(
                 process_data=ProcessData(number=process_number, error=str(e)),
-                movimentos=[],
             )
 
     def _get_other_processes_count(
@@ -497,7 +515,6 @@ class ProcessValueScraper:
             except Exception as e:
                 return ScrapeResult(
                     process_data=ProcessData(number=pn, error=f"Worker error: {e}"),
-                    movimentos=[],
                 )
             finally:
                 self._cleanup_thread_driver()
@@ -510,7 +527,9 @@ class ProcessValueScraper:
                 pn = result.process_data.number
                 logger.info(
                     f"Progress: {len(results)}/{total} — {pn} "
-                    f"({len(result.movimentos)} movs)"
+                    f"({len(result.movimentos)} movs, "
+                    f"{len(result.linked_processes)} linked, "
+                    f"{len(result.peticoes)} peti)"
                 )
                 if progress_callback:
                     progress_callback(result)

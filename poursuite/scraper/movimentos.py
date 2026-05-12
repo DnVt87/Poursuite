@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import re
 from typing import List, Optional
+from urllib.parse import parse_qs, urlparse
 
 from bs4 import BeautifulSoup, Tag
 
@@ -32,6 +33,7 @@ from poursuite.models import Movimento
 
 _DATE_RE = re.compile(r"^(\d{2})/(\d{2})/(\d{4})$")
 _WS_RE = re.compile(r"\s+")
+_CD_DOC_RE = re.compile(r"[?&]cdDocumento=(\d+)")
 
 
 def _normalize_date(raw: str) -> Optional[str]:
@@ -61,6 +63,18 @@ def _find_complementos_span(desc_td: Tag) -> Optional[Tag]:
         "span",
         style=lambda v: bool(v) and "italic" in v.lower(),
     )
+
+
+def _extract_cd_documento(tr: Tag) -> Optional[str]:
+    """Pull the cdDocumento query-string value from any linkMovVincProc anchor
+    inside this movimento row. Returns the first match (eSAJ duplicates the
+    same id across icon + text anchors). None if the movimento has no doc."""
+    anchor = tr.find("a", class_="linkMovVincProc")
+    if anchor is None:
+        return None
+    href = anchor.get("href") or ""
+    m = _CD_DOC_RE.search(href)
+    return m.group(1) if m else None
 
 
 def _extract_movimento_row(tr: Tag, ordem: int) -> Movimento:
@@ -93,6 +107,7 @@ def _extract_movimento_row(tr: Tag, ordem: int) -> Movimento:
         nome=nome,
         complementos_text=complementos_text,
         complementos_json=None,  # structured complementos parsing deferred
+        cd_documento=_extract_cd_documento(tr),
     )
 
 
