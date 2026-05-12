@@ -57,6 +57,19 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
 
 
+def _bump_microsecond(ts_iso: str) -> str:
+    """Add 1µs to an ISO 8601 UTC timestamp produced by `_utc_now_iso`.
+
+    Used by save_snapshot to break ties when the generated snapshot_ts
+    equals the latest stored one — clock jitter or pathological retry
+    loops only. Format compatible with the timestamps the rest of the
+    store produces.
+    """
+    from datetime import timedelta
+    dt = datetime.strptime(ts_iso, "%Y-%m-%dT%H:%M:%S.%f+00:00").replace(tzinfo=timezone.utc)
+    return (dt + timedelta(microseconds=1)).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
+
+
 def compute_snapshot_hash(
     process_data: ProcessData,
     movimentos: Optional[Sequence[Dict[str, Any]]] = None,
@@ -65,25 +78,41 @@ def compute_snapshot_hash(
 ) -> str:
     """Compute the canonical SHA-256 hash of a snapshot's contents.
 
-    The hash is the diff key. Two scrapes producing identical payloads yield
-    the same hash; the second is then a no-op against the store.
+    The hash is the diff key. Two scrapes producing identical content yield
+    the same hash regardless of wire order (the second is then a no-op
+    against the store).
 
-    Ordering: ProcessData fields are sorted by name. Movimentos/linked/peticoes
-    are sorted by their structured fields so wire-order shuffles don't trigger
-    spurious diffs.
+    Sort + exclusion strategy:
+      - Movimentos: sort and serialize by content keys only — (data_hora,
+        nome, complementos_text). `ordem` is wire-order metadata and is
+        EXCLUDED from the hashed payload so wire-order shuffles between
+        scrapes don't trigger spurious diffs.
+      - Linked: sort by (linked_number, relationship_type) — both content.
+      - Peticoes: sort by (data, tipo, cd_documento). `ordem` excluded
+        for the same reason as movimentos.
     """
     header = {f.name: getattr(process_data, f.name) for f in fields(ProcessData)}
+
+    def _strip_ordem(rows: Optional[Sequence[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        return [{k: v for k, v in dict(r).items() if k != "ordem"} for r in (rows or [])]
+
+    movs_no_ordem = _strip_ordem(movimentos)
     movs_canonical = sorted(
-        (dict(m) for m in (movimentos or [])),
-        key=lambda m: (m.get("ordem", -1), m.get("data_hora") or "", m.get("nome") or ""),
+        movs_no_ordem,
+        key=lambda m: (
+            m.get("data_hora") or "",
+            m.get("nome") or "",
+            (m.get("complementos_text") or "")[:200],
+        ),
     )
     linked_canonical = sorted(
         (dict(li) for li in (linked or [])),
         key=lambda li: (li.get("linked_number") or "", li.get("relationship_type") or ""),
     )
+    peti_no_ordem = _strip_ordem(peticoes)
     peti_canonical = sorted(
-        (dict(p) for p in (peticoes or [])),
-        key=lambda p: (p.get("ordem", -1), p.get("data") or "", p.get("cd_documento") or ""),
+        peti_no_ordem,
+        key=lambda p: (p.get("data") or "", p.get("tipo") or "", p.get("cd_documento") or ""),
     )
     payload = {
         "header": header,
@@ -213,7 +242,20 @@ class SnapshotStore:
                     "reason": "unchanged",
                 }
 
+            # snapshot_ts uses microsecond-precision UTC. The lock above
+            # serializes writes within this process, so consecutive snapshots
+            # to the same process get distinct timestamps under normal clock
+            # behavior. Bump-by-1µs handles the pathological case where the
+            # generated ts equals the latest stored ts (system-clock jitter,
+            # or extremely tight retry loops in the future).
             snapshot_ts = _utc_now_iso()
+            if latest is not None and snapshot_ts <= latest["snapshot_ts"]:
+                snapshot_ts = _bump_microsecond(latest["snapshot_ts"])
+                self.logger.warning(
+                    "save_snapshot: bumped snapshot_ts past latest for %s "
+                    "(latest=%s, bumped_to=%s)",
+                    process_data.number, latest["snapshot_ts"], snapshot_ts,
+                )
             header_dict = asdict(process_data)
             header_json = _canonical_json(header_dict)
             cur.execute("BEGIN")

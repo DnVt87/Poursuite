@@ -18,9 +18,11 @@ from poursuite.config import (
     ESAJ_URL,
     PROCESS_NUMBER_PATTERN_STRICT,
 )
-from poursuite.models import ProcessData
+from poursuite.models import Movimento, ProcessData, ScrapeResult
 from poursuite.scraper._chrome import configure_chrome_options
 from poursuite.scraper.cnj_origem import derive_from_cnj
+from poursuite.scraper.movimentos import is_full_timeline, parse_movimentos
+from poursuite.scraper.sections import expand_section_collapsibles
 from poursuite.utils import format_currency, setup_logging
 
 logger = setup_logging("tjsp_scraper")
@@ -305,6 +307,75 @@ class ProcessValueScraper:
         except Exception as e:
             return ProcessData(number=process_number, error=str(e))
 
+    def get_process_record(
+        self,
+        process_number: str,
+        include_other_processes: bool = True,
+        include_movimentos: bool = True,
+    ) -> ScrapeResult:
+        """Scrape header + movimentos in one driver session.
+
+        Returns a ScrapeResult containing the ProcessData plus the
+        movimentos timeline. The `linkmovimentacoes` expand click is
+        attempted before parsing; if it fails, parse_movimentos falls
+        back to the visible-by-default ultimas table and an anomaly is
+        logged (caller sees a partial timeline rather than nothing).
+        """
+        try:
+            self._validate_process_number(process_number)
+            driver = self._get_driver()
+
+            driver.get(ESAJ_URL)
+            self._fill_process_form(driver, process_number)
+            self._wait_for_results(driver)
+
+            # Expand the header `Mais` first — same logic as get_process_data.
+            try:
+                mais = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable(
+                        (By.CSS_SELECTOR, "a[href='#maisDetalhes']")
+                    )
+                )
+                driver.execute_script("arguments[0].click();", mais)
+                try:
+                    WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located((By.ID, "dataHoraDistribuicaoProcesso"))
+                    )
+                except TimeoutException:
+                    pass
+            except TimeoutException:
+                pass
+
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+            process_data = self._extract_process_data(soup, process_number)
+
+            movimentos: List[Movimento] = []
+            if include_movimentos and not process_data.error:
+                # Expose tabelaTodasMovimentacoes by clicking the section toggle.
+                clicked = expand_section_collapsibles(driver, ids=("linkmovimentacoes",))
+                # Re-parse the page after the expand.
+                movs_soup = BeautifulSoup(driver.page_source, "html.parser")
+                if not is_full_timeline(movs_soup):
+                    logger.warning(
+                        "movimentos: full timeline not loaded for %s "
+                        "(linkmovimentacoes expand: %s) — parsing visible subset",
+                        process_number, clicked,
+                    )
+                movimentos = parse_movimentos(movs_soup)
+
+            if include_other_processes and process_data.defendant and not process_data.error:
+                process_data.other_processes = self._get_other_processes_count(
+                    driver, process_data.defendant
+                )
+
+            return ScrapeResult(process_data=process_data, movimentos=movimentos)
+
+        except Exception as e:
+            return ScrapeResult(
+                process_data=ProcessData(number=process_number, error=str(e)),
+                movimentos=[],
+            )
+
     def _get_other_processes_count(
         self, driver: webdriver.Chrome, defendant_name: str
     ) -> Optional[int]:
@@ -392,5 +463,66 @@ class ProcessValueScraper:
         pn_to_result = {r.number: r for r in results}
         return [
             pn_to_result.get(pn, ProcessData(number=pn, error="No result returned"))
+            for pn in process_numbers
+        ]
+
+    def process_batch_records(
+        self,
+        process_numbers: List[str],
+        include_other_processes: bool = False,
+        include_movimentos: bool = True,
+        progress_callback: Optional[Callable[[ScrapeResult], None]] = None,
+    ) -> List[ScrapeResult]:
+        """Scrape multiple process numbers with full record (header + movimentos).
+
+        Same threading/ordering semantics as process_batch. The progress
+        callback receives ScrapeResult objects in completion order; the
+        return value restores input order.
+        """
+        total = len(process_numbers)
+        logger.info(
+            f"Processing {total} processes (with movimentos) "
+            f"with {self.max_concurrent_browsers} concurrent browsers"
+        )
+
+        results: List[ScrapeResult] = []
+
+        def scrape_one(pn: str) -> ScrapeResult:
+            try:
+                return self.get_process_record(
+                    pn,
+                    include_other_processes=include_other_processes,
+                    include_movimentos=include_movimentos,
+                )
+            except Exception as e:
+                return ScrapeResult(
+                    process_data=ProcessData(number=pn, error=f"Worker error: {e}"),
+                    movimentos=[],
+                )
+            finally:
+                self._cleanup_thread_driver()
+
+        with ThreadPoolExecutor(max_workers=self.max_concurrent_browsers) as executor:
+            futures = {executor.submit(scrape_one, pn): pn for pn in process_numbers}
+            for future in as_completed(futures):
+                result = future.result()
+                results.append(result)
+                pn = result.process_data.number
+                logger.info(
+                    f"Progress: {len(results)}/{total} — {pn} "
+                    f"({len(result.movimentos)} movs)"
+                )
+                if progress_callback:
+                    progress_callback(result)
+
+        # Restore original input order
+        pn_to_result = {r.process_data.number: r for r in results}
+        return [
+            pn_to_result.get(
+                pn,
+                ScrapeResult(
+                    process_data=ProcessData(number=pn, error="No result returned"),
+                ),
+            )
             for pn in process_numbers
         ]

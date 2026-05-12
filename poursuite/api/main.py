@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from poursuite.db.connection import DatabaseManager
+from poursuite.db.esaj_snapshots import SnapshotStore
 from poursuite.db.search import SearchEngine
 from poursuite.api.routes import extract as extract_router
 from poursuite.api.routes import frontend as frontend_router
@@ -27,9 +28,11 @@ async def lifespan(app: FastAPI):
     # Startup: discover databases once, hold connections for the session
     app.state.db_manager = DatabaseManager()
     app.state.search_engine = SearchEngine(app.state.db_manager)
+    app.state.snapshot_store = SnapshotStore()
     yield
     # Shutdown: close all open SQLite connections cleanly
     app.state.db_manager.close_connections()
+    app.state.snapshot_store.close()
 
 
 app = FastAPI(

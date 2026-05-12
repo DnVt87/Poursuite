@@ -49,3 +49,31 @@ Notes from Phase 1 that Phase 2 should keep:
 - The viewport fix in `_chrome.py` (1920×1080 + desktop UA + `--disable-blink-features=AutomationControlled`) is what made the desktop layout reliably render. Phase 2 driver code should keep using `configure_chrome_options()` rather than building its own ChromeOptions.
 - `derive_from_cnj` returns derived fields even for sealed cases. Phase 2's snapshot row should record those derived fields independently of whether the scrape succeeded — they come from the process number, not from the page.
 - BS4's `find(class_=None)` excludes elements with class attributes (despite docs saying otherwise). The Phase 1 fix in `_extract_field` builds `find()` kwargs conditionally. Reuse that pattern when adding new selectors.
+
+## 4. Findings from Phase 2c
+
+### Inventory walker overcounted movimento rows by 6 per case
+
+The inventory probe's per-section row count (e.g. `Movimentações: tables=1 (rows=72)` for case 1033164) is **overinclusive** by a consistent 6 rows per case. Root cause:
+
+- The Movimentações section's `<table>` contains both `<tbody id="tabelaUltimasMovimentacoes">` (the "last 5 movs" subset, always rendered for visual flash-then-hide) AND `<tbody id="tabelaTodasMovimentacoes">` (the full timeline, exposed after `#linkmovimentacoes` is clicked). Both tbodies are in the same `<table>`.
+- The inventory walker counts every `<tr>` with `<td>` cells inside the section, which double-counts the "last 5" rows (they appear in both tbodies — same content, two rows each) and includes 1 thead spacer row with empty `<td></td><td></td><td></td>` cells.
+- Net overcount per case: **5 (last-5 duplicates) + 1 (thead spacer) = 6**.
+
+**Production parser deduplicates by reading only `#tabelaTodasMovimentacoes`.** See `parse_movimentos` in [poursuite/scraper/movimentos.py](poursuite/scraper/movimentos.py). The parser's count is the canonical "real" movimento count.
+
+**Implication:** when reading the May-10 inventory_report.md, treat row counts as N+6 for the Movimentações section specifically. The inventory's row counts on other sections (Partes, Petições, Incidentes, Apensos, Audiências) don't have this issue — those sections have a single tbody.
+
+### Pagination remains unverified
+
+All 16 cases tested in 2c had <500 movimentos and rendered in a single page. Whether eSAJ paginates movimentos at higher counts is **unproven**. The parser logs a WARNING via `is_full_timeline(soup) → False` when `#tabelaTodasMovimentacoes` isn't present after the expand click; this is the safety net. When production hits a case where this warning fires, treat it as a finding to investigate, not a bug to silence.
+
+### Decisions locked in v3 PLAN.md and shipped in 2a-2c
+
+- Scrape-then-diff (won over append-every-time)
+- All four sections in Phase 2 (movimentos shipped in 2c; linked + petições in 2d)
+- Snapshot DB at `DB_DIR/esaj_snapshots.db`, separate from DJE corpus
+- Hybrid `process_snapshot` schema: 21 promoted Phase-1 columns + `header_json` blob
+- `movimento.codigo` is INTEGER NULL (eSAJ doesn't expose; reserved for DataJud enrichment)
+- `/extract` keeps in-memory job dict for status polling; writes through to snapshot store for persistence
+- `complementos_json` is NULL for 2c; complementos text-only is sufficient for FTS-based "movimento contains X" queries. Structured K:V parsing is a follow-up if a rule wants it.
