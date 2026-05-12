@@ -39,6 +39,12 @@ from poursuite.config import (
 )
 from poursuite.probes import write_json
 from poursuite.scraper._chrome import configure_chrome_options
+from poursuite.scraper.sections import (
+    SECTION_COLLAPSIBLE_IDS as _SECTION_COLLAPSIBLE_IDS,
+    enumerate_sections as _enumerate_sections,
+    expand_section_collapsibles as _expand_section_collapsibles,
+    walk_section as _walk_section,
+)
 
 
 # Authoritative mapping from CLAUDE_CODE_BRIEF_VIEWPORT_AND_RERUN.md §
@@ -241,33 +247,6 @@ def _expand_header(driver: webdriver.Chrome) -> bool:
         return True
     except TimeoutException:
         return False
-
-
-# Inline collapsibles inside the section blocks. Clicking these toggles
-# the visible table from "Últimas N" to "Todas as N", or "Partes principais"
-# to "Todas as partes". Each is identified by a stable `id`.
-_SECTION_COLLAPSIBLE_IDS: Tuple[str, ...] = (
-    "linkpartes",          # Partes do processo: tablePartesPrincipais ↔ tableTodasPartes
-    "linkmovimentacoes",   # Movimentações: tabelaUltimasMovimentacoes ↔ tabelaTodasMovimentacoes
-)
-
-
-def _expand_section_collapsibles(driver: webdriver.Chrome) -> List[str]:
-    """Click each known section-level expand link to expose hidden full tables.
-    Returns the list of link ids that were successfully clicked.
-    """
-    clicked: List[str] = []
-    for link_id in _SECTION_COLLAPSIBLE_IDS:
-        try:
-            link = WebDriverWait(driver, 3).until(
-                EC.element_to_be_clickable((By.ID, link_id))
-            )
-            driver.execute_script("arguments[0].click();", link)
-            clicked.append(link_id)
-            time.sleep(0.4)
-        except (TimeoutException, NoSuchElementException, WebDriverException):
-            continue
-    return clicked
 
 
 # ---------------------------------------------------------------------------
@@ -509,158 +488,10 @@ def _capture_badges(soup: BeautifulSoup) -> List[Dict[str, str]]:
     return badges
 
 
-# ---------------------------------------------------------------------------
-# Section enumeration & per-section walking
-#
-# eSAJ's consulta page is a SINGLE long document — there are no tabs.
-# Sections are delimited inline by <h2 class="subtitle tituloDoBloco">, with
-# the section's content rendered as the h2 wrapper's following siblings until
-# the next h2.tituloDoBloco. Observed sections:
-#   - Partes do processo
-#   - Movimentações
-#   - Petições diversas
-#   - Incidentes, ações incidentais, recursos e execuções de sentenças
-#   - Apensos, Entranhados e Unificados
-#   - Audiências
-# ---------------------------------------------------------------------------
-
-_SECTION_HEADER_CLASS = "tituloDoBloco"
-
-
-def _enumerate_sections(soup: BeautifulSoup) -> List[Dict[str, Any]]:
-    """Find h2.tituloDoBloco headers and slice the DOM into per-section root tags.
-
-    Each section's `root_tags` is the list of h2-wrapper's following siblings
-    (in document order) up to but not including the wrapper containing the
-    next h2.tituloDoBloco.
-    """
-    sections: List[Dict[str, Any]] = []
-    h2s = soup.find_all("h2", class_=_SECTION_HEADER_CLASS)
-    for h2 in h2s:
-        label = re.sub(r"\s+", " ", h2.get_text(" ", strip=True)).strip()
-        wrapper = h2.parent if h2.parent is not None else h2
-        root_tags: List[Any] = []
-        sib = wrapper.next_sibling
-        while sib is not None:
-            if hasattr(sib, "name") and sib.name:
-                inner_h2 = (sib.find("h2", class_=_SECTION_HEADER_CLASS)
-                            if hasattr(sib, "find") else None)
-                if inner_h2 is not None:
-                    break
-                root_tags.append(sib)
-            sib = sib.next_sibling
-        sections.append({
-            "label": label or "(unnamed section)",
-            "h2_id": h2.get("id"),
-            "wrapper_classes": " ".join(wrapper.get("class") or []) if hasattr(wrapper, "get") else "",
-            "root_tags": root_tags,
-        })
-    return sections
-
-
-def _walk_section(section: Dict[str, Any]) -> Dict[str, Any]:
-    """Aggregate stats from a section's list of root sibling tags.
-
-    Captures: text length / preview, table summaries, list counts, anchor
-    counts, filter inputs, pagination hints. Operates on the pre-fetched
-    BeautifulSoup tags — no driver interaction.
-    """
-    label = section["label"]
-    root_tags = section["root_tags"]
-    text_parts: List[str] = []
-    table_summaries: List[Dict[str, Any]] = []
-    list_counts = {"ul": 0, "ol": 0, "li": 0}
-    filters: List[Dict[str, str]] = []
-    pagination: Dict[str, Any] = {"text_hits": [], "has_pagination_class": False}
-    anchor_count = 0
-    pag_classes = ("paginacao", "pagination", "pagina")
-
-    def _summarize_table(table) -> Dict[str, Any]:
-        headers = [th.get_text(" ", strip=True) for th in table.find_all("th")]
-        rows = table.find_all("tr")
-        sample_row = None
-        for r in rows:
-            cells = r.find_all("td")
-            if cells:
-                sample_row = [c.get_text(" ", strip=True) for c in cells]
-                break
-        return {
-            "id": table.get("id"),
-            "classes": " ".join(table.get("class") or []),
-            "header_count": len(headers),
-            "headers": headers[:30],
-            "row_count": sum(1 for r in rows if r.find_all("td")),
-            "sample_row": sample_row,
-        }
-
-    seen_table_ids: set = set()
-    for root in root_tags:
-        if not hasattr(root, "name") or not root.name:
-            continue
-        try:
-            text_parts.append(root.get_text(" ", strip=True))
-        except Exception:
-            pass
-
-        candidate_tables: List[Any] = []
-        if root.name == "table":
-            candidate_tables.append(root)
-        candidate_tables.extend(root.find_all("table"))
-        for table in candidate_tables:
-            tid = id(table)
-            if tid in seen_table_ids:
-                continue
-            seen_table_ids.add(tid)
-            table_summaries.append(_summarize_table(table))
-
-        anchor_count += sum(1 for _ in root.find_all("a"))
-        if root.name == "a":
-            anchor_count += 1
-
-        list_counts["ul"] += sum(1 for _ in root.find_all("ul"))
-        list_counts["ol"] += sum(1 for _ in root.find_all("ol"))
-        list_counts["li"] += sum(1 for _ in root.find_all("li"))
-
-        candidate_inputs: List[Any] = []
-        if root.name in ("input", "select", "textarea"):
-            candidate_inputs.append(root)
-        candidate_inputs.extend(root.find_all(["input", "select", "textarea"]))
-        for inp in candidate_inputs:
-            if inp.get("type") == "hidden":
-                continue
-            filters.append({
-                "tag": inp.name,
-                "type": inp.get("type") or "",
-                "name": inp.get("name") or "",
-                "id": inp.get("id") or "",
-                "placeholder": inp.get("placeholder") or "",
-            })
-
-        for el in root.find_all(class_=lambda c: bool(c) and any(m in c for m in pag_classes)):
-            pagination["has_pagination_class"] = True
-            pagination["text_hits"].append(el.get_text(" ", strip=True)[:200])
-
-    text = " ".join(t for t in text_parts if t)
-    m = re.search(r"P[áa]gina\s+\d+\s+de\s+\d+", text, flags=re.IGNORECASE)
-    if m:
-        pagination["text_hits"].append(m.group(0))
-    m = re.search(r"(\d+)\s+movimentos?", text, flags=re.IGNORECASE)
-    if m:
-        pagination["movimentos_total_hint"] = int(m.group(1))
-
-    return {
-        "label": label,
-        "h2_id": section.get("h2_id"),
-        "root_tag_count": len(root_tags),
-        "text_length": len(text),
-        "text_preview": text[:1000],
-        "tables": table_summaries[:30],
-        "table_count_total": len(table_summaries),
-        "list_counts": list_counts,
-        "anchors_in_section": anchor_count,
-        "filters": filters,
-        "pagination": pagination,
-    }
+# Section enumeration & per-section walking primitives live in
+# poursuite/scraper/sections.py so the production scraper (Phase 2c) can
+# reuse them. They're imported above with underscore aliases to preserve
+# this module's pre-2b call-sites verbatim.
 
 
 # ---------------------------------------------------------------------------
