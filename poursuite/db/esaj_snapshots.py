@@ -439,6 +439,132 @@ class SnapshotStore:
         return int(cur.fetchone()[0])
 
     # ─────────────────────────────────────────────────────────────────
+    # Child-table retrieval (for the 4 GET endpoints)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _latest_snapshot_ts(self, process_number: str) -> Optional[str]:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT MAX(snapshot_ts) FROM process_snapshot WHERE process_number = ?",
+            (process_number,),
+        )
+        row = cur.fetchone()
+        return row[0] if row and row[0] else None
+
+    def get_movimentos(
+        self,
+        process_number: str,
+        snapshot_ts: Optional[str] = None,
+        since: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Movimentos for the given snapshot (latest if not specified).
+
+        `since` filters by data_hora >= since (ISO 8601 date or full ts).
+        """
+        ts = snapshot_ts or self._latest_snapshot_ts(process_number)
+        if ts is None:
+            return []
+        cur = self._conn.cursor()
+        if since:
+            cur.execute(
+                "SELECT * FROM movimento "
+                "WHERE process_number = ? AND snapshot_ts = ? "
+                "AND data_hora IS NOT NULL AND data_hora >= ? "
+                "ORDER BY ordem",
+                (process_number, ts, since),
+            )
+        else:
+            cur.execute(
+                "SELECT * FROM movimento "
+                "WHERE process_number = ? AND snapshot_ts = ? "
+                "ORDER BY ordem",
+                (process_number, ts),
+            )
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_linked(
+        self,
+        process_number: str,
+        snapshot_ts: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        ts = snapshot_ts or self._latest_snapshot_ts(process_number)
+        if ts is None:
+            return []
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT * FROM linked_process "
+            "WHERE process_number = ? AND snapshot_ts = ? "
+            "ORDER BY relationship_type, linked_number",
+            (process_number, ts),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_peticoes(
+        self,
+        process_number: str,
+        snapshot_ts: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        ts = snapshot_ts or self._latest_snapshot_ts(process_number)
+        if ts is None:
+            return []
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT * FROM peticao "
+            "WHERE process_number = ? AND snapshot_ts = ? "
+            "ORDER BY ordem",
+            (process_number, ts),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    # ─────────────────────────────────────────────────────────────────
+    # Query (POST /api/query)
+    # ─────────────────────────────────────────────────────────────────
+
+    def query(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Run a structured query body against the snapshot store.
+
+        See poursuite/db/esaj_query.py for the body shape. On malformed
+        bodies, raises QueryError — caller should catch and return 400.
+        On FTS5 syntax errors in `match` values, the underlying SQLite
+        raises an OperationalError; we wrap it as QueryError too.
+        """
+        from poursuite.db.esaj_query import QueryError, build_query
+
+        built = build_query(body)
+
+        cur = self._conn.cursor()
+        try:
+            cur.execute(built.count_sql, built.count_params)
+        except sqlite3.OperationalError as e:
+            raise QueryError(f"SQL error (likely FTS5 syntax): {e}") from e
+        total = int(cur.fetchone()[0])
+
+        results: List[Dict[str, Any]] = []
+        if not built.count_only and built.limit > 0:
+            try:
+                cur.execute(built.select_sql, built.select_params)
+            except sqlite3.OperationalError as e:
+                raise QueryError(f"SQL error (likely FTS5 syntax): {e}") from e
+            rows = cur.fetchall()
+            for row in rows:
+                results.append({
+                    "process_number": row["process_number"],
+                    "snapshot_ts": row["snapshot_ts"],
+                    "fields": {
+                        f: row[f]
+                        for f in built.fields
+                        if f not in ("process_number",) and f in row.keys()
+                    },
+                })
+        return {
+            "total": total,
+            "limit": built.limit,
+            "offset": built.offset,
+            "count_only": built.count_only,
+            "results": results,
+        }
+
+    # ─────────────────────────────────────────────────────────────────
     # Lifecycle
     # ─────────────────────────────────────────────────────────────────
 

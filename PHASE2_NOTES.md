@@ -68,6 +68,82 @@ The inventory probe's per-section row count (e.g. `Movimentações: tables=1 (ro
 
 All 16 cases tested in 2c had <500 movimentos and rendered in a single page. Whether eSAJ paginates movimentos at higher counts is **unproven**. The parser logs a WARNING via `is_full_timeline(soup) → False` when `#tabelaTodasMovimentacoes` isn't present after the expand click; this is the safety net. When production hits a case where this warning fires, treat it as a finding to investigate, not a bug to silence.
 
+### Field-type catalog for the query builder UI
+
+The eventual UI (PLAN.md v3 §6.3, next workstream after Phase 2) needs to decide which operators to offer per field. Storage is all TEXT/INTEGER in SQLite — semantic type is what matters for sane operator choice. Catalog below.
+
+**Legend:**
+- *numeric* — comparison ops (`<`, `<=`, `>`, `>=`) compare numerically. Storage is INTEGER.
+- *ISO-comparable text* — TEXT, but values are in a fixed-width format where lexicographic ordering equals chronological/natural ordering. Comparison ops are safe.
+- *broken comparable text* — TEXT in a format where lexicographic compare gives WRONG results. The UI should restrict to `=`, `!=`, `in`, `not_in` (and `is_null`); comparison ops should be hidden until the value is parsed/normalized.
+- *identifier / enum / free text* — TEXT where comparison ops don't make semantic sense. `=`, `!=`, `in`, `not_in` only. `match` for free-text fields with FTS5 backing.
+
+**process_snapshot (header fields, queried via top-level clauses):**
+
+| Field | Type | Ops the UI should offer |
+|---|---|---|
+| `process_number` | identifier | `=`, `!=`, `in`, `not_in` |
+| `snapshot_ts` | ISO-comparable text (ISO 8601 microsecond) | all scalar + `in`/`not_in` |
+| `initial_date` | **broken** (raw `DD/MM/YYYY`) | `=`, `!=`, `in`, `not_in`, `is_null` only |
+| `class_type` | enum-ish | `=`, `!=`, `in`, `not_in` |
+| `subject` | free text | `=`, `!=`, `in`, `not_in` (FTS could be added later) |
+| `value` | **broken** (raw `R$ N.NNN,NN`) | `=`, `!=`, `in`, `not_in`, `is_null` only; numeric compare requires normalization |
+| `last_movement` | **broken** (raw `DD/MM/YYYY`) | `=`, `!=`, `in`, `not_in`, `is_null` only |
+| `status` | enum | `=`, `!=`, `in`, `not_in`, `is_null` |
+| `plaintiff` | free text | `=`, `!=`, `in`, `not_in` |
+| `defendant` | free text | `=`, `!=`, `in`, `not_in` |
+| `other_processes` | numeric | all scalar + `is_null` |
+| `foro` | enum-ish (~600 values) | `=`, `!=`, `in`, `not_in` |
+| `vara` | free text | `=`, `!=`, `in`, `not_in` |
+| `juiz` | free text | `=`, `!=`, `in`, `not_in` |
+| `controle` | identifier | `=`, `!=`, `in`, `not_in` |
+| `outros_assuntos` | free text | `=`, `!=`, `in`, `not_in`, `is_null` |
+| `outros_numeros` | identifier | `=`, `!=`, `in`, `not_in`, `is_null` |
+| `local_fisico` | free text | `=`, `!=`, `in`, `not_in`, `is_null` |
+| `area` | enum (low cardinality) | `=`, `!=`, `in`, `not_in` |
+| `foro_code` | ISO-comparable text (fixed-width 4-digit) | all scalar + `in`/`not_in` |
+| `tribunal_code` | ISO-comparable text (fixed-width 2-digit) | all scalar + `in`/`not_in` |
+| `distribution_year` | ISO-comparable text (fixed-width 4-digit `YYYY`) | all scalar + `in`/`not_in` |
+| `scrape_outcome` | enum (`loaded` / `sealed` / `error` / `not_found`) | `=`, `!=`, `in` |
+| `scrape_error` | free text | `=`, `!=`, `in`, `is_null`, `is_not_null` |
+
+**movimento (inside `movimento_any`):**
+
+| Field | Type | Ops |
+|---|---|---|
+| `ordem` | numeric | all scalar |
+| `data_hora` | ISO-comparable text **when parseable** | all scalar (parser normalizes `DD/MM/YYYY` → `YYYY-MM-DD`; unparseable values retain raw, which would break compare — uncommon but possible) |
+| `codigo` | numeric (currently NULL — reserved for DataJud enrichment) | all scalar + `is_null` |
+| `nome` | free text + **FTS5** | `=`, `!=`, `in`, `not_in`, **`match`** |
+| `complementos_text` | free text + **FTS5** | `=`, `!=`, `in`, `not_in`, **`match`** |
+| `cd_documento` | identifier | `=`, `!=`, `in`, `is_null`, `is_not_null` |
+
+**linked_process (inside `linked_any`):**
+
+| Field | Type | Ops |
+|---|---|---|
+| `linked_number` | identifier (CNJ format) | `=`, `!=`, `in`, `not_in` |
+| `relationship_type` | enum (`apenso`, `incidente`) | `=`, `!=`, `in`, `not_in` |
+
+**peticao (inside `peticao_any`):**
+
+| Field | Type | Ops |
+|---|---|---|
+| `ordem` | numeric | all scalar |
+| `data` | ISO-comparable text when parseable | all scalar |
+| `tipo` | enum-ish | `=`, `!=`, `in`, `not_in` |
+| `cd_documento` | identifier (currently always NULL) | `=`, `!=`, `in`, `is_null`, `is_not_null` |
+
+**Aggregate sub-clauses (`movimento_count`, `linked_count`, `peticao_count`):**
+
+- Operand type: **numeric**. Operators: `=`, `!=`, `<`, `<=`, `>`, `>=`. Value must be an integer.
+
+**Followups the UI design might want to surface:**
+
+- `initial_date`, `last_movement`, `peticao.data`, `movimento.data_hora`: production scraper stores these as raw `DD/MM/YYYY` in some paths and normalized `YYYY-MM-DD` in others (the movimentos parser normalizes; the production scraper doesn't normalize `initial_date` from the header). A consistent normalization pass during scrape would unlock comparison ops on all of them.
+- `value`: storing as a parsed numeric (cents int? decimal?) would enable `value > 100000` rules. Currently the raw string makes this impossible without re-parsing per query. The CSV-export path also benefits from a normalized value column.
+- These are storage-layer cleanups, not query-engine concerns. Queueing as a future workstream.
+
 ### `linked_process.relationship_type` granularity is section-level only
 
 The brief listed candidate values `{apenso, incidente, dependente, embargos, ...}` mixing section names and content classifications. In 2d we settled on **section-level only**: `"apenso"` for any row in the Apensos/Entranhados/Unificados section, `"incidente"` for any row in the Incidentes/Recursos/Execuções section. Finer subtypes (entranhado vs unificado, recurso vs execução-de-sentença, embargos vs IDPJ) would require columnar data eSAJ doesn't expose — the Apensos table has columns for Classe of the linked process, Apensamento date, and Motivo, but no column for which of {apenso, entranhado, unificado} applies to *this* relationship. The Classe column tells us what the linked process IS, not what the relationship TO it is. Refinement is feasible later if a query rule wants finer types, but the linkage data needed isn't in eSAJ's current DOM.
