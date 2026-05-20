@@ -63,13 +63,25 @@ poursuite/                        ← installed package
 │   ├── auth.py                   ← X-API-Key dependency
 │   ├── schemas.py                ← Pydantic response models
 │   └── routes/
-│       ├── frontend.py           ← embedded HTML/CSS/JS SPA at GET /
+│       ├── frontend.py           ← serves SPAs: new at /, legacy at /legacy
+│       ├── spa_v2.html           ← new query-builder SPA (vanilla JS, 10 screens; UI Phase 2.5)
 │       ├── search.py             ← /search, /search/export
 │       ├── extract.py            ← /extract/start, /status/{id}, /export/{id}
-│       └── stats.py              ← /stats   (defined but not currently included in main.py)
+│       ├── stats.py              ← /stats   (defined but not currently included in main.py)
+│       ├── snapshots.py          ← /api/process/{n}/{snapshots,movimentos,links,peticoes}; /api/query
+│       ├── groups.py             ← /api/groups (carteira CRUD; backed by JSON file)
+│       ├── flags.py              ← /api/flags (★ toggle; backed by process_flags table)
+│       ├── snapshot_status.py    ← /api/snapshot_status (bulk freshness lookup)
+│       ├── aggregates.py         ← /api/aggregates/{group_by,histogram,stats}
+│       ├── explain_zero.py       ← /api/query/explain_zero
+│       └── saved_queries.py      ← /api/saved_queries (shared library; schema v3)
 ├── db/
 │   ├── connection.py             ← DatabaseManager (multi-shard discovery, conn pool)
-│   └── search.py                 ← SearchEngine (FTS5 fanout, pagination, exclusion)
+│   ├── search.py                 ← SearchEngine (FTS5 fanout, pagination, exclusion)
+│   ├── esaj_schema.sql           ← v1 baseline DDL for esaj_snapshots.db
+│   ├── esaj_snapshots.py         ← SnapshotStore + migrations v2 (cd_documento) / v3 (flags + saved_queries) / v4 (normalized columns)
+│   ├── esaj_query.py             ← build_query + synth_where_only (WHERE-tree synthesis)
+│   └── process_groups.py         ← ProcessGroupStore (JSON file, write-rename atomicity)
 └── scraper/
     ├── esaj.py                   ← ProcessValueScraper (Selenium pool against eSAJ)
     └── csv_extractor.py          ← CSVProcessExtractor (extract process numbers from CSV)
@@ -544,7 +556,89 @@ The codebase is largely the executed form of this plan. Phases 1–3 (package la
 
 ---
 
-## 13. Quick Reference — Where Things Live
+## 13. UI Phase 2.5 — Query-builder additions (May 2026)
+
+The query-builder UI ships against six new endpoint groups, two schema-migration
+versions, a JSON-backed group store, and a vanilla-JS SPA replacement at `/`.
+The original SPA stays available at `/legacy` for the transition month.
+
+### 13.1 Schema v3 + v4
+
+- **v3** — additive tables, no risk of breaking existing rows:
+  - `process_flags(process_number TEXT PRIMARY KEY, flagged_at TEXT NOT NULL)`
+  - `saved_queries(id INTEGER PK AUTOINCREMENT, name, description, query_body TEXT, created_at, last_run_at, last_run_count)`
+- **v4** — column adds on `process_snapshot` (idempotent via `PRAGMA table_info` guard):
+  - `foro_name` — `derive_from_cnj(...)["foro_name"]`, previously computed and discarded.
+  - `last_movement_iso` — ISO-8601 date parsed from the raw `DD/MM/YYYY` `last_movement`.
+  - `value_centavos` — BRL × 100 integer parsed from the raw `R$ N.NNN,NN` `value`.
+
+Indices: `idx_process_snapshot_foro_name`, `..._last_movement_iso`, `..._value_centavos`
+(WHERE-clause partial indices, NULL-skipping).
+
+Scraper populates the three v4 fields on write. Existing rows are backfilled
+by [`scripts/backfill_normalized_columns.py`](scripts/backfill_normalized_columns.py)
+(idempotent, `--dry-run` available).
+
+### 13.2 `synth_where_only` refactor
+
+`build_query` in [`poursuite/db/esaj_query.py`](poursuite/db/esaj_query.py) was decomposed:
+`synth_where_only(body) → (where_sql, params, joins)` returns the
+WHERE fragment with the snapshot predicate and `flagged_only` / `unflagged_only`
+already merged. `build_query` now wraps this; the aggregate and explain-zero
+endpoints share the same primitive. `joins` is `[]` in v1 — the hook for a
+future LEFT-JOIN promotion of `flagged` to a regular field.
+
+### 13.3 New endpoint groups (six)
+
+All under `poursuite/api/routes/`, all using the existing `X-API-Key` middleware.
+
+| Module | Routes |
+|---|---|
+| `groups.py` | `GET /api/groups`, `GET /api/groups/{id}`, `POST /api/groups`, `DELETE /api/groups/{id}` |
+| `flags.py` | `GET /api/flags`, `POST /api/flags/{pn}`, `DELETE /api/flags/{pn}` |
+| `snapshot_status.py` | `POST /api/snapshot_status` (bulk freshness lookup; chunked `IN`) |
+| `aggregates.py` | `POST /api/aggregates/group_by`, `.../histogram`, `.../stats` |
+| `explain_zero.py` | `POST /api/query/explain_zero` |
+| `saved_queries.py` | `GET /api/saved_queries`, `GET /api/saved_queries/{id}`, `POST`, `PUT /{id}`, `DELETE /{id}`, `POST /{id}/touch` |
+
+Group storage is a **JSON file** at `$POURSUITE_SNAPSHOT_DIR/process_groups.json`,
+managed by `poursuite/db/process_groups.py` (write-rename atomicity, per-instance
+`threading.Lock`). Per Patch 1 of `CLAUDE_CODE_BRIEF_UI_IMPL_v2.md`, the carteira
+is upload provenance — not a workspace — so a table would be over-built.
+
+### 13.4 Aggregate semantics
+
+- `group_by` accepts the same `where` / `snapshot` / `flagged_only` /
+  `unflagged_only` surface as `/api/query`. Whitelisted fields: `class_type`,
+  `foro_code`, `foro_name`, `vara`, `juiz`, `distribution_year`, plus the
+  virtual `last_movement_bucket` (SQL `julianday('now') - julianday(last_movement_iso)`,
+  five buckets ≤30d / 30-90d / 90-180d / 180-365d / >365d).
+- `histogram` operates on `value_centavos`. Default bucket edges in BRL units:
+  `[0, 10k, 50k, 100k, 500k, 1M, 5M]`. The unbounded top bucket emits
+  `range_high: null`.
+- `stats` returns `count`, `sum`, `mean`, `median`, `min`, `max` in BRL.
+  Median via `LIMIT 1 OFFSET count/2` (SQLite has no `PERCENTILE_DISC`).
+
+### 13.5 Frontend
+
+- `GET /` serves the new SPA from [`poursuite/api/routes/spa_v2.html`](poursuite/api/routes/spa_v2.html)
+  (file read once at module load). Vanilla HTML/CSS/JS, 10 screens, hash router.
+- `GET /legacy` serves the original parameter-form SPA from the embedded
+  `_LEGACY_HTML` in [`frontend.py`](poursuite/api/routes/frontend.py).
+- The visual builder ↔ JSON textarea sync triggers on blur (per Patch 3);
+  builder parity audited in [`docs/ui_design/BUILDER_PARITY.md`](docs/ui_design/BUILDER_PARITY.md).
+- Cancellable queries are UI-side only (`AbortController.abort()`); the server
+  keeps running. Adequate at current query times.
+
+### 13.6 Env var
+
+`POURSUITE_SNAPSHOT_DIR` (default: `POURSUITE_DB_DIR`) — holds
+`esaj_snapshots.db` and `process_groups.json`. Lets the operator separate
+snapshot data from the DJE shards if disk pressure shifts.
+
+---
+
+## 14. Quick Reference — Where Things Live
 
 | Need to… | Look in |
 |---|---|

@@ -1,0 +1,1702 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Poursuite — Wireframes (Design Pass)</title>
+<style>
+  /* ─────────────────────────────────────────────────────────────────
+     Plain HTML + inline CSS wireframes. No framework. No real API.
+     Click-through between all 10 screens via the left-side nav.
+     ───────────────────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
+    background: #f5f6f8;
+    color: #1f2330;
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  a { color: #2a55c9; text-decoration: none; cursor: pointer; }
+  a:hover { text-decoration: underline; }
+  code, .mono { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; font-size: 0.85em; }
+
+  /* ── Frame layout ── */
+  .frame {
+    display: grid;
+    grid-template-columns: 230px 1fr;
+    min-height: 100vh;
+  }
+  .sidebar {
+    background: #1d2233;
+    color: #c8ccdb;
+    padding: 18px 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  .sidebar h1 {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #fff;
+    padding: 0 18px 14px;
+    border-bottom: 1px solid #2c3247;
+    margin-bottom: 12px;
+    letter-spacing: 0.05em;
+  }
+  .sidebar h1 small { display: block; font-weight: 400; font-size: 0.7rem; color: #7a83a3; margin-top: 2px; letter-spacing: 0; }
+  .sidebar nav ol { list-style: none; counter-reset: scr; }
+  .sidebar nav a {
+    counter-increment: scr;
+    display: block;
+    padding: 7px 18px 7px 36px;
+    color: #c8ccdb;
+    font-size: 0.84rem;
+    border-left: 3px solid transparent;
+    position: relative;
+  }
+  .sidebar nav a::before {
+    content: counter(scr);
+    position: absolute;
+    left: 14px;
+    color: #5a607a;
+    font-variant-numeric: tabular-nums;
+  }
+  .sidebar nav a:hover { background: #252b40; text-decoration: none; }
+  .sidebar nav a.active { background: #2a3050; color: #fff; border-left-color: #6b7fff; }
+  .sidebar .legend {
+    font-size: 0.72rem;
+    color: #7a83a3;
+    padding: 12px 18px;
+    border-top: 1px solid #2c3247;
+    margin-top: 14px;
+  }
+  .sidebar .legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .dot.existing { background: #3aa860; }
+  .dot.future   { background: #d68a2a; }
+
+  /* ── Screen ── */
+  .screen { display: none; padding: 0; }
+  .screen.active { display: block; }
+  .screen-header {
+    background: #fff;
+    border-bottom: 1px solid #dee2ec;
+    padding: 14px 28px;
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+  }
+  .screen-header h2 { font-size: 1.05rem; font-weight: 700; }
+  .screen-header .sub { color: #5b6378; font-size: 0.82rem; }
+  .screen-header .tag {
+    margin-left: auto;
+    font-size: 0.72rem;
+    padding: 3px 9px;
+    border-radius: 12px;
+    font-weight: 600;
+  }
+  .tag.existing { background: #e2f4e9; color: #1f6b3e; }
+  .tag.future   { background: #fbeacd; color: #8a5210; }
+
+  .screen-body { padding: 22px 28px 60px; max-width: 1280px; }
+
+  /* ── App chrome (faked) ── */
+  .app-bar {
+    background: #fff;
+    border-bottom: 1px solid #dee2ec;
+    padding: 8px 28px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 0.82rem;
+  }
+  .app-bar .brand { font-weight: 700; color: #2a55c9; letter-spacing: 0.04em; }
+  .app-bar nav a { color: #5b6378; padding: 4px 8px; border-radius: 6px; }
+  .app-bar nav a:hover { background: #f0f2f8; text-decoration: none; }
+  .app-bar .right { margin-left: auto; display: flex; align-items: center; gap: 10px; color: #5b6378; }
+  .app-bar .key-pill {
+    background: #eef1f8; padding: 3px 9px; border-radius: 12px; font-size: 0.74rem;
+    border: 1px solid #d8dde9; color: #2c3247;
+  }
+
+  /* ── Generic blocks ── */
+  .card {
+    background: #fff;
+    border: 1px solid #dee2ec;
+    border-radius: 8px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+  }
+  .card h3 {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #5b6378;
+    margin-bottom: 14px;
+    font-weight: 700;
+  }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .col { flex: 1; min-width: 0; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+
+  .btn {
+    display: inline-block;
+    border: 1px solid #2a55c9;
+    background: #2a55c9;
+    color: #fff;
+    padding: 7px 14px;
+    border-radius: 6px;
+    font-size: 0.84rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn.ghost  { background: #fff; color: #2a55c9; }
+  .btn.warn   { background: #b94d2a; border-color: #b94d2a; }
+  .btn.muted  { background: #eef1f8; color: #2c3247; border-color: #d8dde9; }
+  .btn.danger { background: #fff; color: #b94d2a; border-color: #b94d2a; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn.small  { padding: 4px 10px; font-size: 0.78rem; }
+
+  input[type=text], input[type=password], input[type=date], input[type=number], select, textarea {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid #cdd3df;
+    border-radius: 6px;
+    font-size: 0.86rem;
+    font-family: inherit;
+    background: #fff;
+  }
+  textarea { resize: vertical; min-height: 80px; font-family: "JetBrains Mono", Consolas, monospace; font-size: 0.82rem; }
+  label.field { display: block; font-size: 0.76rem; font-weight: 600; color: #5b6378; margin-bottom: 4px; }
+  label.field .hint { color: #8c93a6; font-weight: 400; margin-left: 6px; }
+
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 12px; background: #eef1f8; color: #2c3247; font-size: 0.74rem; }
+  .pill.green { background: #e2f4e9; color: #1f6b3e; }
+  .pill.amber { background: #fbeacd; color: #8a5210; }
+  .pill.red   { background: #f9dcd6; color: #872d10; }
+  .pill.blue  { background: #dde6fb; color: #1a3a8c; }
+  .pill.gray  { background: #e3e6ee; color: #4a5167; }
+
+  .badge-flag { color: #d68a2a; font-size: 1.1em; cursor: pointer; }
+  .badge-flag.off { color: #c9cfdb; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #ebeef4; }
+  th { background: #f5f6f8; font-weight: 600; color: #5b6378; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  tr:hover td { background: #fafbfd; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .json-preview {
+    background: #1d2233;
+    color: #d2d7ea;
+    border-radius: 6px;
+    padding: 12px 14px;
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 0.78rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-x: auto;
+  }
+  .json-preview .k { color: #8da9ff; }
+  .json-preview .s { color: #d0a36a; }
+  .json-preview .n { color: #e0d27c; }
+  .json-preview .b { color: #b290ff; }
+
+  .skeleton {
+    background: linear-gradient(90deg, #ebeef4 25%, #f5f6f8 50%, #ebeef4 75%);
+    height: 14px; border-radius: 4px; margin: 6px 0;
+  }
+
+  .alert {
+    border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 0.84rem;
+    border-left: 3px solid;
+  }
+  .alert.info { background: #eef4fb; border-color: #2a55c9; color: #1a3a8c; }
+  .alert.warn { background: #fdf4e5; border-color: #d68a2a; color: #8a5210; }
+  .alert.err  { background: #fbe9e5; border-color: #b94d2a; color: #872d10; }
+  .alert.ok   { background: #e7f4ec; border-color: #3aa860; color: #1f6b3e; }
+
+  .crumbs { color: #8c93a6; font-size: 0.82rem; margin-bottom: 10px; }
+  .crumbs a { color: #5b6378; }
+
+  /* ── Query builder specifics ── */
+  .qb-toggle {
+    display: inline-flex;
+    background: #eef1f8;
+    border-radius: 6px;
+    padding: 3px;
+    gap: 3px;
+  }
+  .qb-toggle button {
+    border: none; background: transparent; padding: 5px 12px; font-size: 0.8rem;
+    border-radius: 4px; cursor: pointer; color: #5b6378; font-weight: 600;
+  }
+  .qb-toggle button.active { background: #fff; color: #2a55c9; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+
+  .qb-tree { border-left: 2px solid #c9cfdb; padding-left: 14px; margin: 6px 0; }
+  .qb-node {
+    background: #fafbfd;
+    border: 1px solid #dee2ec;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+  .qb-node .connector {
+    display: inline-block;
+    background: #2a55c9; color: #fff;
+    padding: 1px 9px; border-radius: 10px;
+    font-size: 0.74rem; font-weight: 700; letter-spacing: 0.04em;
+    margin-right: 8px;
+  }
+  .qb-node .connector.or  { background: #8a5210; }
+  .qb-node .connector.not { background: #872d10; }
+  .qb-node .connector.sub { background: #3aa860; }
+  .qb-leaf { display: flex; gap: 8px; align-items: center; margin: 5px 0; }
+  .qb-leaf select, .qb-leaf input { padding: 4px 8px; font-size: 0.82rem; }
+  .qb-leaf .ff { width: 180px; }
+  .qb-leaf .op { width: 110px; }
+  .qb-leaf .vv { flex: 1; min-width: 120px; }
+
+  .qb-explain {
+    background: #fdf4e5; border: 1px solid #f0d8a8; border-radius: 6px;
+    padding: 12px 14px; font-size: 0.84rem; color: #5b3a05;
+  }
+  .qb-explain h4 { font-weight: 700; margin-bottom: 6px; }
+  .qb-explain ul { margin-left: 18px; }
+  .qb-explain li { margin: 2px 0; }
+
+  /* ── Timeline (movimentações) ── */
+  .timeline { border-left: 2px solid #cdd3df; margin-left: 6px; padding-left: 14px; }
+  .mov {
+    background: #fafbfd; border: 1px solid #ebeef4; border-radius: 6px;
+    padding: 10px 12px; margin-bottom: 8px; position: relative;
+  }
+  .mov::before {
+    content: ''; position: absolute; left: -22px; top: 14px; width: 10px; height: 10px;
+    border-radius: 50%; background: #6b7fff; border: 2px solid #fff;
+  }
+  .mov .mov-head { display: flex; gap: 10px; font-size: 0.82rem; color: #5b6378; margin-bottom: 4px; }
+  .mov .mov-head strong { color: #1f2330; }
+  .mov .mov-body { font-size: 0.85rem; color: #1f2330; }
+  .mov .mov-complementos { font-size: 0.82rem; color: #4a5167; margin-top: 4px; white-space: pre-wrap; }
+
+  /* ── Aggregate bars ── */
+  .bar-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 0.84rem; }
+  .bar-row .label { width: 200px; color: #2c3247; }
+  .bar-row .bar { flex: 1; background: #ebeef4; border-radius: 4px; height: 16px; overflow: hidden; }
+  .bar-row .bar > div { background: #2a55c9; height: 100%; }
+  .bar-row .count { width: 70px; text-align: right; color: #5b6378; font-variant-numeric: tabular-nums; }
+
+  /* ── Histogram (text-mode bars) ── */
+  .hist { display: flex; align-items: flex-end; gap: 4px; height: 140px; padding: 8px 0; }
+  .hist > div { background: #2a55c9; flex: 1; border-radius: 3px 3px 0 0; position: relative; }
+  .hist > div::after {
+    content: attr(data-label); position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%);
+    font-size: 0.7rem; color: #5b6378; white-space: nowrap;
+  }
+
+  /* ── Progress ── */
+  .progress { background: #ebeef4; height: 10px; border-radius: 5px; overflow: hidden; }
+  .progress > div { background: #2a55c9; height: 100%; }
+
+  /* ── Footer hint ── */
+  .footer-hint {
+    margin-top: 20px; padding: 10px 14px; background: #eef1f8; border-radius: 6px;
+    font-size: 0.78rem; color: #5b6378;
+  }
+  .deep-search-cta {
+    background: #2a3050; color: #fff; padding: 10px 14px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    font-size: 0.84rem;
+  }
+  .deep-search-cta .btn { background: #6b7fff; border-color: #6b7fff; }
+
+  .schema-table td.field-name { font-family: "JetBrains Mono", Consolas, monospace; color: #2a55c9; font-size: 0.82rem; }
+  .schema-table td.ops { font-family: "JetBrains Mono", Consolas, monospace; font-size: 0.78rem; color: #5b6378; }
+
+  .stale-indicator { font-size: 0.76rem; color: #8a5210; }
+  .stale-indicator::before { content: '⏱ '; }
+
+  /* Optional small modal effect for the login screen */
+  .login-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #1d2233; padding: 40px 20px; }
+  .login-card { background: #fff; padding: 36px 40px; border-radius: 10px; width: 100%; max-width: 420px; box-shadow: 0 12px 48px rgba(0,0,0,0.25); }
+  .login-card h2 { font-size: 1.3rem; margin-bottom: 8px; }
+  .login-card .sub { color: #5b6378; font-size: 0.84rem; margin-bottom: 22px; }
+  .login-card .warn-row { font-size: 0.78rem; padding: 8px 10px; margin-bottom: 14px; border-radius: 5px; }
+</style>
+</head>
+<body>
+
+<div class="frame">
+
+  <!-- ═════════ Sidebar nav ═════════ -->
+  <aside class="sidebar">
+    <h1>Poursuite — Wireframes <small>Design pass · revisão pelo advogado</small></h1>
+    <nav>
+      <ol>
+        <li><a href="#screen-1" data-target="screen-1">Login</a></li>
+        <li><a href="#screen-2" data-target="screen-2">Início / Carteiras</a></li>
+        <li><a href="#screen-3" data-target="screen-3">Carregar carteira (CSV)</a></li>
+        <li><a href="#screen-4" data-target="screen-4">Construtor de consultas</a></li>
+        <li><a href="#screen-5" data-target="screen-5">Resultados</a></li>
+        <li><a href="#screen-6" data-target="screen-6">Detalhe do processo</a></li>
+        <li><a href="#screen-7" data-target="screen-7">Consultas salvas</a></li>
+        <li><a href="#screen-8" data-target="screen-8">Esquema (dicionário)</a></li>
+        <li><a href="#screen-9" data-target="screen-9">Visões agregadas</a></li>
+        <li><a href="#screen-10" data-target="screen-10">Busca DJE</a></li>
+      </ol>
+    </nav>
+    <div class="legend">
+      <div><span class="dot existing"></span>API existente (Fase 2)</div>
+      <div style="margin-top:4px"><span class="dot future"></span>API futura (a implementar)</div>
+      <div style="margin-top:10px; color:#5a607a">Click any screen above. Mock data only — no real network calls.</div>
+    </div>
+  </aside>
+
+  <!-- ═════════ Screens ═════════ -->
+  <main>
+
+    <!-- ═════════ Screen 1: Login ═════════ -->
+    <section class="screen active" id="screen-1">
+      <div class="login-page">
+        <div class="login-card">
+          <h2>Poursuite</h2>
+          <div class="sub">Entre com a chave de acesso compartilhada.</div>
+
+          <!-- HTTPS warning state (mocked visible because design must show it) -->
+          <div class="alert warn" style="margin-bottom:18px">
+            <strong>Atenção:</strong> conexão sem TLS detectada. Use https://poursuite.com.br.<br>
+            <span style="font-size:0.78rem">(Em produção, este aviso só aparece se servido via HTTP.)</span>
+          </div>
+
+          <label class="field" for="login-key">Chave de API</label>
+          <input type="password" id="login-key" placeholder="••••••••••••••••" value="••••••••••••••••">
+          <div style="font-size:0.76rem; color:#8c93a6; margin: 6px 0 18px">
+            A chave é guardada em <code>sessionStorage</code> e expira ao fechar o navegador.
+          </div>
+          <button class="btn" style="width:100%" onclick="show('screen-2')">Entrar</button>
+
+          <div style="margin-top: 22px; padding-top: 18px; border-top: 1px solid #ebeef4; font-size: 0.78rem; color: #5b6378; line-height: 1.6">
+            <strong>Sobre o acesso:</strong><br>
+            Uma única chave compartilhada para todos os usuários do escritório. Tudo o que é salvo (consultas, marcadores) fica num espaço comum — não há "minhas" vs. "do time".
+            <br><br>
+            Se a chave vazar: o operador rotaciona via variável de ambiente <code>POURSUITE_API_KEY</code> e re-comunica.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═════════ Screen 2: Home / Portfolios ═════════ -->
+    <section class="screen" id="screen-2">
+      <div class="app-bar">
+        <span class="brand">POURSUITE</span>
+        <nav>
+          <a onclick="show('screen-2')">Início</a>
+          <a onclick="show('screen-4')">Consultas</a>
+          <a onclick="show('screen-7')">Salvas</a>
+          <a onclick="show('screen-10')">DJE</a>
+          <a onclick="show('screen-8')">Esquema</a>
+          <a onclick="show('screen-9')">Agregados</a>
+        </nav>
+        <div class="right">
+          <span class="key-pill">chave: ••••3f7a</span>
+          <a onclick="show('screen-1')">Sair</a>
+        </div>
+      </div>
+
+      <div class="screen-header">
+        <h2>Início</h2>
+        <span class="sub">Espaço compartilhado do escritório</span>
+        <span class="tag future">design contra API futura</span>
+      </div>
+
+      <div class="screen-body">
+
+        <div class="grid-2">
+          <!-- Recent portfolios -->
+          <div class="card">
+            <h3>Carteiras recentes</h3>
+            <table>
+              <thead><tr><th>Nome</th><th>Processos</th><th>Última atualização</th><th></th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><a onclick="show('screen-5')">Carteira Itaú · maio/2026</a></td>
+                  <td class="num">847</td>
+                  <td>há 2 dias</td>
+                  <td><span class="pill green">pronta</span></td>
+                </tr>
+                <tr>
+                  <td><a onclick="show('screen-3')">Carteira Bradesco · abril/2026</a></td>
+                  <td class="num">312</td>
+                  <td>há 1 semana</td>
+                  <td><span class="pill amber">52 com erro</span></td>
+                </tr>
+                <tr>
+                  <td><a onclick="show('screen-5')">Carteira Santander · março/2026</a></td>
+                  <td class="num">1.204</td>
+                  <td>há 3 semanas</td>
+                  <td><span class="pill green">pronta</span></td>
+                </tr>
+                <tr>
+                  <td><a onclick="show('screen-3')">Lote piloto · fev/2026</a></td>
+                  <td class="num">98</td>
+                  <td>há 2 meses</td>
+                  <td><span class="pill gray">arquivada</span></td>
+                </tr>
+              </tbody>
+            </table>
+            <div style="margin-top: 14px">
+              <button class="btn" onclick="show('screen-3')">+ Nova carteira</button>
+            </div>
+          </div>
+
+          <!-- Saved queries -->
+          <div class="card">
+            <h3>Consultas salvas (recentes)</h3>
+            <table>
+              <thead><tr><th>Nome</th><th>Resultados</th><th>Última execução</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><a onclick="show('screen-4')">Penhora SISBAJUD ≥ R$ 100k</a></td>
+                  <td class="num">142</td>
+                  <td>ontem · 18h22</td>
+                </tr>
+                <tr>
+                  <td><a onclick="show('screen-4')">Sem movimento há 180+ dias</a></td>
+                  <td class="num">61</td>
+                  <td>há 3 dias</td>
+                </tr>
+                <tr>
+                  <td><a onclick="show('screen-4')">Execução fiscal · vara 7</a></td>
+                  <td class="num">28</td>
+                  <td>há 1 semana</td>
+                </tr>
+              </tbody>
+            </table>
+            <div style="margin-top: 14px">
+              <button class="btn ghost" onclick="show('screen-7')">Ver biblioteca completa →</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick actions -->
+        <div class="card">
+          <h3>Atalhos</h3>
+          <div class="row">
+            <button class="btn ghost" onclick="show('screen-4')">Nova consulta</button>
+            <button class="btn ghost" onclick="show('screen-10')">Buscar no DJE</button>
+            <button class="btn ghost" onclick="show('screen-6')">Abrir processo específico</button>
+            <button class="btn ghost" onclick="show('screen-9')">Agregados da carteira atual</button>
+          </div>
+        </div>
+
+        <div class="footer-hint">
+          <strong>Modelo mental:</strong> tudo o que você salva aqui é visível para os outros advogados que compartilham a chave. Não há autor; não há "minhas" consultas. Cuidado ao apagar.
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ═════════ Screen 3: Portfolio upload / scrape progress ═════════ -->
+    <section class="screen" id="screen-3">
+      <div class="app-bar">
+        <span class="brand">POURSUITE</span>
+        <nav>
+          <a onclick="show('screen-2')">Início</a>
+          <a onclick="show('screen-4')">Consultas</a>
+          <a onclick="show('screen-7')">Salvas</a>
+          <a onclick="show('screen-10')">DJE</a>
+          <a onclick="show('screen-8')">Esquema</a>
+          <a onclick="show('screen-9')">Agregados</a>
+        </nav>
+        <div class="right"><span class="key-pill">chave: ••••3f7a</span></div>
+      </div>
+
+      <div class="screen-header">
+        <h2>Carregar carteira</h2>
+        <span class="sub">Upload CSV → scraping eSAJ → carteira pronta para consulta</span>
+        <span class="tag future">design contra API futura (persistência de carteiras)</span>
+      </div>
+
+      <div class="screen-body">
+        <div class="crumbs"><a onclick="show('screen-2')">Início</a> › Nova carteira</div>
+
+        <!-- Step 1: Upload -->
+        <div class="card">
+          <h3>1. Upload</h3>
+          <div class="grid-2">
+            <div>
+              <label class="field">Nome da carteira</label>
+              <input type="text" value="Carteira Itaú · maio/2026">
+            </div>
+            <div>
+              <label class="field">Arquivo CSV <span class="hint">uma coluna `numero_processo` ou texto solto</span></label>
+              <input type="text" value="carteira_itau_2026-05.csv (847 linhas)" readonly>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2: Snapshot decision -->
+        <div class="card">
+          <h3>2. Verificação de snapshots existentes</h3>
+          <div class="alert info">
+            <strong>312 processos</strong> têm snapshot recente (≤ 7 dias) no banco. <strong>535</strong> precisam de scraping.
+          </div>
+          <div class="row" style="margin-bottom: 8px">
+            <label class="field" style="margin: 0">Reaproveitar snapshots com até</label>
+            <select style="width: 120px"><option>7 dias</option><option selected>14 dias</option><option>30 dias</option><option>nunca (refazer)</option></select>
+            <span style="font-size: 0.82rem; color: #5b6378">→ <strong>535</strong> processos serão raspados</span>
+          </div>
+          <table>
+            <thead><tr><th>Status</th><th>Quantidade</th><th></th></tr></thead>
+            <tbody>
+              <tr><td><span class="pill green">Snapshot recente</span></td><td class="num">312</td><td>carregados direto</td></tr>
+              <tr><td><span class="pill blue">Para raspar</span></td><td class="num">535</td><td>fila eSAJ</td></tr>
+              <tr><td><span class="pill amber">Possível duplicata</span></td><td class="num">0</td><td>nenhuma detectada</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Step 3: Scrape progress (live) -->
+        <div class="card">
+          <h3>3. Scraping em andamento</h3>
+          <div class="progress" style="margin-bottom: 10px"><div style="width: 64%"></div></div>
+          <div style="font-size: 0.84rem; color: #5b6378; display: flex; justify-content: space-between; margin-bottom: 14px">
+            <span><strong>342</strong> de <strong>535</strong> · 4 navegadores · 64%</span>
+            <span>Estimativa: ~12 min restantes</span>
+          </div>
+
+          <table>
+            <thead><tr><th>Processo</th><th>Status</th><th>Detalhe</th><th>Erro</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">1000123-45.2023.8.26.0100</td><td><span class="pill green">OK</span></td><td>22 movs · 3 vinculados</td><td>—</td></tr>
+              <tr><td class="mono">1000124-46.2023.8.26.0100</td><td><span class="pill green">OK</span></td><td>14 movs · 1 vinculado</td><td>—</td></tr>
+              <tr><td class="mono">1000125-47.2023.8.26.0100</td><td><span class="pill red">Erro</span></td><td>—</td><td>captcha intermitente</td></tr>
+              <tr><td class="mono">1000126-48.2023.8.26.0100</td><td><span class="pill blue">Em andamento…</span></td><td>—</td><td>—</td></tr>
+              <tr><td class="mono">1000127-49.2023.8.26.0100</td><td><span class="pill gray">Na fila</span></td><td>—</td><td>—</td></tr>
+              <tr><td class="mono">1000128-50.2023.8.26.0100</td><td><span class="pill gray">Na fila</span></td><td>—</td><td>—</td></tr>
+            </tbody>
+          </table>
+
+          <div class="row" style="margin-top: 14px">
+            <button class="btn ghost">Pausar</button>
+            <button class="btn ghost">Retentar 7 erros</button>
+            <span style="margin-left: auto; font-size: 0.82rem; color: #5b6378">
+              <strong>328</strong> ok · <strong>7</strong> erros · <strong>200</strong> restantes
+            </span>
+          </div>
+        </div>
+
+        <!-- Step 4: Done state preview -->
+        <div class="card" style="opacity: 0.65">
+          <h3>4. Pronto (estado quando completar)</h3>
+          <div class="alert ok"><strong>Carteira pronta:</strong> 847 processos disponíveis (840 com sucesso, 7 com erro).</div>
+          <button class="btn" onclick="show('screen-4')">Compor consulta sobre esta carteira →</button>
+          <button class="btn ghost" onclick="show('screen-5')">Ver todos como lista (sem filtro)</button>
+        </div>
+
+        <div class="footer-hint">
+          <strong>Nota:</strong> carteira é apenas um rótulo. Os snapshots ficam no banco unificado <code>esaj_snapshots.db</code> independentemente de qual carteira originou o scrape — a próxima vez que esses números aparecerem em outra carteira, serão reaproveitados.
+        </div>
+      </div>
+    </section>
+
+    <!-- ═════════ Screen 4: Query Builder ═════════ -->
+    <section class="screen" id="screen-4">
+      <div class="app-bar">
+        <span class="brand">POURSUITE</span>
+        <nav>
+          <a onclick="show('screen-2')">Início</a>
+          <a onclick="show('screen-4')">Consultas</a>
+          <a onclick="show('screen-7')">Salvas</a>
+          <a onclick="show('screen-10')">DJE</a>
+          <a onclick="show('screen-8')">Esquema</a>
+          <a onclick="show('screen-9')">Agregados</a>
+        </nav>
+        <div class="right"><span class="key-pill">chave: ••••3f7a</span></div>
+      </div>
+
+      <div class="screen-header">
+        <h2>Construtor de consultas</h2>
+        <span class="sub">Carteira: <strong>Itaú · maio/2026</strong> · 847 processos</span>
+        <span class="tag existing">API existente: POST /api/query</span>
+      </div>
+
+      <div class="screen-body">
+
+        <!-- Top controls -->
+        <div class="card">
+          <div class="row" style="margin-bottom: 14px">
+            <label class="field" style="margin: 0">Modo do construtor:</label>
+            <div class="qb-toggle">
+              <button class="active" onclick="qbMode('visual')">Visual (Opção 1)</button>
+              <button onclick="qbMode('text')">Texto (Opção 2)</button>
+            </div>
+
+            <div style="margin-left: auto" class="row">
+              <label class="field" style="margin: 0">Snapshot temporal:</label>
+              <select style="width: 200px" onchange="this.dataset.v=this.value">
+                <option selected>Mais recente (latest)</option>
+                <option>Qualquer snapshot (any)</option>
+                <option>A partir de uma data…</option>
+              </select>
+              <input type="date" style="width: 150px" value="2026-03-15">
+            </div>
+          </div>
+
+          <!-- ░░░░░░░░░░ OPTION 1: Visual builder ░░░░░░░░░░ -->
+          <div id="qb-visual">
+            <div class="qb-node">
+              <span class="connector">AND</span>
+              <span style="font-size: 0.84rem; color: #5b6378">raiz · todas as cláusulas devem corresponder</span>
+
+              <div class="qb-tree">
+
+                <!-- Leaf 1: class_type -->
+                <div class="qb-node">
+                  <div class="qb-leaf">
+                    <select class="ff">
+                      <option selected>Classe (class_type)</option>
+                      <option>Assunto (subject)</option>
+                      <option>Valor (value)</option>
+                      <option>Foro (foro)</option>
+                    </select>
+                    <select class="op">
+                      <option selected>é igual a</option>
+                      <option>não é</option>
+                      <option>está em</option>
+                      <option>não está em</option>
+                      <option>é nulo</option>
+                    </select>
+                    <input class="vv" type="text" value="Execução de Título Extrajudicial">
+                    <button class="btn small ghost">−</button>
+                  </div>
+                </div>
+
+                <!-- Leaf 2: value >= -->
+                <div class="qb-node">
+                  <div class="qb-leaf">
+                    <select class="ff">
+                      <option>Classe</option>
+                      <option selected>Valor (value)</option>
+                    </select>
+                    <select class="op">
+                      <option>=</option>
+                      <option selected>≥</option>
+                      <option>≤</option>
+                      <option>&lt;</option>
+                      <option>&gt;</option>
+                    </select>
+                    <input class="vv" type="text" value="100000">
+                    <button class="btn small ghost">−</button>
+                  </div>
+                </div>
+
+                <!-- Sub-clause: movimento_any -->
+                <div class="qb-node">
+                  <span class="connector sub">EXISTE movimentação</span>
+                  <span style="font-size: 0.84rem; color: #5b6378">pelo menos uma movimentação onde…</span>
+                  <div class="qb-tree">
+                    <div class="qb-node">
+                      <span class="connector or">OR</span>
+                      <div class="qb-tree">
+                        <div class="qb-leaf">
+                          <select class="ff"><option selected>nome</option><option>complementos_text</option></select>
+                          <select class="op"><option selected>busca FTS5 (match)</option></select>
+                          <input class="vv" type="text" value="penhora">
+                          <button class="btn small ghost">−</button>
+                        </div>
+                        <div class="qb-leaf">
+                          <select class="ff"><option>nome</option><option selected>complementos_text</option></select>
+                          <select class="op"><option selected>busca FTS5 (match)</option></select>
+                          <input class="vv" type="text" value="SISBAJUD OR bloqueio">
+                          <button class="btn small ghost">−</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <button class="btn small ghost">+ Adicionar cláusula</button>
+                <button class="btn small ghost">+ Subconjunto AND/OR</button>
+                <button class="btn small ghost">+ Existe movimentação</button>
+                <button class="btn small ghost">+ Existe processo vinculado</button>
+                <button class="btn small ghost">+ Existe petição</button>
+                <button class="btn small ghost">+ Contagem (movimentos/vinculados/petições)</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- ░░░░░░░░░░ OPTION 2: Text-style query ░░░░░░░░░░ -->
+          <div id="qb-text" style="display: none">
+            <label class="field">Consulta em texto <span class="hint">linguagem inspirada em SQL · operadores: = != &lt; &lt;= &gt; &gt;= in not_in is_null is_not_null match</span></label>
+            <textarea rows="9">class_type = "Execução de Título Extrajudicial"
+AND value &gt;= 100000
+AND movimentos.nome MATCH "penhora"
+   OR movimentos.complementos_text MATCH "SISBAJUD OR bloqueio"
+AND linked_count &gt;= 1
+SNAPSHOT latest
+ORDER BY snapshot_ts DESC
+LIMIT 100</textarea>
+            <div style="font-size: 0.78rem; color: #5b6378; margin-top: 6px">
+              Parser server-side traduz para o mesmo JSON que o modo visual produz. Veja preview abaixo.
+            </div>
+          </div>
+
+          <!-- Run / save bar -->
+          <div class="row" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid #ebeef4">
+            <button class="btn" onclick="show('screen-5')">▶ Executar</button>
+            <button class="btn ghost">Cancelar execução</button>
+            <button class="btn ghost">Limpar</button>
+            <span style="margin-left: auto" class="row">
+              <input type="text" placeholder="Nomear consulta…" style="width: 240px" value="Penhora SISBAJUD ≥ R$ 100k">
+              <button class="btn ghost">💾 Salvar</button>
+              <button class="btn muted">Copiar JSON</button>
+            </span>
+          </div>
+        </div>
+
+        <!-- JSON preview -->
+        <div class="card">
+          <h3>Preview do JSON enviado para <code>POST /api/query</code></h3>
+          <div class="json-preview">{
+  <span class="k">"select"</span>: [<span class="s">"process_number"</span>, <span class="s">"class_type"</span>, <span class="s">"value"</span>, <span class="s">"foro"</span>, <span class="s">"last_movement"</span>, <span class="s">"juiz"</span>],
+  <span class="k">"where"</span>: {
+    <span class="k">"and"</span>: [
+      { <span class="k">"field"</span>: <span class="s">"class_type"</span>, <span class="k">"op"</span>: <span class="s">"="</span>, <span class="k">"value"</span>: <span class="s">"Execução de Título Extrajudicial"</span> },
+      { <span class="k">"field"</span>: <span class="s">"value"</span>,      <span class="k">"op"</span>: <span class="s">"&gt;="</span>, <span class="k">"value"</span>: <span class="n">100000</span> },
+      { <span class="k">"movimento_any"</span>: {
+          <span class="k">"or"</span>: [
+            { <span class="k">"field"</span>: <span class="s">"nome"</span>,              <span class="k">"op"</span>: <span class="s">"match"</span>, <span class="k">"value"</span>: <span class="s">"penhora"</span> },
+            { <span class="k">"field"</span>: <span class="s">"complementos_text"</span>, <span class="k">"op"</span>: <span class="s">"match"</span>, <span class="k">"value"</span>: <span class="s">"SISBAJUD OR bloqueio"</span> }
+          ]
+        }
+      }
+    ]
+  },
+  <span class="k">"snapshot"</span>: <span class="s">"latest"</span>,
+  <span class="k">"order_by"</span>: [{ <span class="k">"field"</span>: <span class="s">"snapshot_ts"</span>, <span class="k">"dir"</span>: <span class="s">"desc"</span> }],
+  <span class="k">"limit"</span>: <span class="n">100</span>,
+  <span class="k">"offset"</span>: <span class="n">0</span>
+}</div>
+          <div style="font-size: 0.78rem; color: #5b6378; margin-top: 6px">
+            Preview atualiza ao vivo conforme o construtor é editado. Para <code>{"at": "..."}</code>, troque o seletor temporal acima.
+          </div>
+        </div>
+
+        <!-- Explain zero results (shown for design review) -->
+        <div class="card">
+          <h3>Explicação de zero resultados <span style="font-weight: 400; color: #8c93a6; font-size: 0.74rem; margin-left: 6px">(aparece quando a consulta retorna 0)</span></h3>
+          <div class="qb-explain">
+            <h4>Por que zero?</h4>
+            <p>O sistema reexecutou cada cláusula isolada contra a carteira. Resultado:</p>
+            <ul>
+              <li><code>class_type = "Execução de Título Extrajudicial"</code> → <strong>312</strong> processos</li>
+              <li><code>value &gt;= 100000</code> → <strong>198</strong> processos</li>
+              <li><code>movimento_any (penhora OR SISBAJUD/bloqueio)</code> → <strong>0</strong> ← cláusula que zerou tudo</li>
+            </ul>
+            <p style="margin-top: 8px">A cláusula de movimentação não bate com nenhum processo desta carteira. Possíveis causas: termos com acentuação diferente, FTS5 tokenizer não removendo diacríticos, ou o evento simplesmente não está nesta carteira.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ═════════ Screen 5: Results view ═════════ -->
+    <section class="screen" id="screen-5">
+      <div class="app-bar">
+        <span class="brand">POURSUITE</span>
+        <nav>
+          <a onclick="show('screen-2')">Início</a>
+          <a onclick="show('screen-4')">Consultas</a>
+          <a onclick="show('screen-7')">Salvas</a>
+          <a onclick="show('screen-10')">DJE</a>
+          <a onclick="show('screen-8')">Esquema</a>
+          <a onclick="show('screen-9')">Agregados</a>
+        </nav>
+        <div class="right"><span class="key-pill">chave: ••••3f7a</span></div>
+      </div>
+
+      <div class="screen-header">
+        <h2>Resultados</h2>
+        <span class="sub">142 processos · "Penhora SISBAJUD ≥ R$ 100k" · carteira Itaú · maio/2026</span>
+        <span class="tag existing">API existente: POST /api/query</span>
+      </div>
+
+      <div class="screen-body">
+        <div class="crumbs"><a onclick="show('screen-2')">Início</a> › <a onclick="show('screen-4')">Construtor</a> › Resultados</div>
+
+        <!-- Header bar -->
+        <div class="card">
+          <div class="row">
+            <span><strong>142</strong> processos · página 1 de 2</span>
+            <span class="stale-indicator">Resultados de 47 segundos atrás</span>
+            <span style="margin-left: auto" class="row">
+              <button class="btn ghost small" onclick="show('screen-4')">✎ Refinar consulta</button>
+              <button class="btn ghost small">💾 Salvar consulta</button>
+              <button class="btn ghost small">⬇ Exportar CSV…</button>
+              <button class="btn ghost small" onclick="show('screen-9')">📊 Ver agregados</button>
+            </span>
+          </div>
+        </div>
+
+        <!-- Field selector for CSV export (collapsed UI) -->
+        <details class="card" style="padding: 12px 16px">
+          <summary style="cursor: pointer; font-weight: 600; font-size: 0.84rem; color: #2c3247">Campos exibidos / a exportar (clique para escolher)</summary>
+          <div class="grid-4" style="margin-top: 12px">
+            <label><input type="checkbox" checked> Processo (process_number)</label>
+            <label><input type="checkbox" checked> Classe (class_type)</label>
+            <label><input type="checkbox" checked> Valor (value)</label>
+            <label><input type="checkbox" checked> Foro (foro)</label>
+            <label><input type="checkbox" checked> Vara (vara)</label>
+            <label><input type="checkbox" checked> Juiz (juiz)</label>
+            <label><input type="checkbox" checked> Última movimentação (last_movement)</label>
+            <label><input type="checkbox"> Autor (plaintiff)</label>
+            <label><input type="checkbox"> Réu (defendant)</label>
+            <label><input type="checkbox"> Assunto (subject)</label>
+            <label><input type="checkbox"> Outros assuntos (outros_assuntos)</label>
+            <label><input type="checkbox"> Local físico (local_fisico)</label>
+          </div>
+        </details>
+
+        <!-- Results table -->
+        <div class="card" style="padding: 0">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:36px"></th>
+                <th>Processo ↓</th>
+                <th>Classe</th>
+                <th>Valor</th>
+                <th>Foro</th>
+                <th>Vara</th>
+                <th>Última mov.</th>
+                <th>Juiz</th>
+                <th style="width:120px">Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="badge-flag">★</span></td>
+                <td class="mono"><a onclick="show('screen-6')">1000123-45.2023.8.26.0100</a></td>
+                <td>Execução de Título Extrajudicial</td>
+                <td class="num">R$ 247.892,15</td>
+                <td>Foro Central Cível</td>
+                <td>7ª Vara Cível</td>
+                <td>15/04/2026</td>
+                <td>Dra. Mariana Souza</td>
+                <td>
+                  <button class="btn small ghost" onclick="show('screen-6')">Abrir</button>
+                  <button class="btn small muted" title="Busca profunda nos PDFs deste processo (Fase 3 — futuro)">🔍 Deep</button>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="badge-flag off">☆</span></td>
+                <td class="mono"><a onclick="show('screen-6')">1000124-46.2023.8.26.0100</a></td>
+                <td>Execução de Título Extrajudicial</td>
+                <td class="num">R$ 142.330,00</td>
+                <td>Foro Central Cível</td>
+                <td>12ª Vara Cível</td>
+                <td>02/04/2026</td>
+                <td>Dr. Paulo Andrade</td>
+                <td>
+                  <button class="btn small ghost" onclick="show('screen-6')">Abrir</button>
+                  <button class="btn small muted">🔍 Deep</button>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="badge-flag">★</span></td>
+                <td class="mono"><a onclick="show('screen-6')">1000131-53.2022.8.26.0100</a></td>
+                <td>Execução de Título Extrajudicial</td>
+                <td class="num">R$ 1.832.460,42</td>
+                <td>Foro Regional Santo Amaro</td>
+                <td>3ª Vara Cível</td>
+                <td>28/03/2026</td>
+                <td>Dr. Ricardo Penteado</td>
+                <td>
+                  <button class="btn small ghost" onclick="show('screen-6')">Abrir</button>
+                  <button class="btn small muted">🔍 Deep</button>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="badge-flag off">☆</span></td>
+                <td class="mono"><a onclick="show('screen-6')">1000142-78.2023.8.26.0100</a></td>
+                <td>Execução de Título Extrajudicial</td>
+                <td class="num">R$ 318.005,90</td>
+                <td>Foro Central Cível</td>
+                <td>22ª Vara Cível</td>
+                <td>10/04/2026</td>
+                <td>Dra. Helena Castro</td>
+                <td>
+                  <button class="btn small ghost" onclick="show('screen-6')">Abrir</button>
+                  <button class="btn small muted">🔍 Deep</button>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="badge-flag off">☆</span></td>
+                <td class="mono"><a onclick="show('screen-6')">1000158-12.2024.8.26.0100</a></td>
+                <td>Execução de Título Extrajudicial</td>
+                <td class="num">R$ 105.220,00</td>
+                <td>Foro Central Cível</td>
+                <td>4ª Vara Cível</td>
+                <td>05/04/2026</td>
+                <td>Dr. Luís Camargo</td>
+                <td>
+                  <button class="btn small ghost" onclick="show('screen-6')">Abrir</button>
+                  <button class="btn small muted">🔍 Deep</button>
+                </td>
+              </tr>
+              <!-- Skeleton row (mock of loading more) -->
+              <tr><td colspan="9">
+                <div class="skeleton" style="width: 90%"></div>
+                <div class="skeleton" style="width: 80%"></div>
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="row" style="margin-top: 14px">
+          <span style="font-size: 0.82rem; color: #5b6378"><strong>2 marcadas</strong> nesta página · <strong>14</strong> marcadas no total da consulta</span>
+          <button class="btn small ghost">⬇ Exportar apenas marcados</button>
+          <span style="margin-left: auto">
+            <button class="btn small ghost">‹ Anterior</button>
+            <button class="btn small">1</button>
+            <button class="btn small ghost">2</button>
+            <button class="btn small ghost">Próxima ›</button>
+          </span>
+        </div>
+
+        <div class="footer-hint">
+          A marca-estrela (★) é compartilhada — qualquer usuário do escritório vê e pode alterar. <em>(Funcionalidade de marcadores: API futura.)</em>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═════════ Screen 6: Case detail view ═════════ -->
+    <section class="screen" id="screen-6">
+      <div class="app-bar">
+        <span class="brand">POURSUITE</span>
+        <nav>
+          <a onclick="show('screen-2')">Início</a>
+          <a onclick="show('screen-4')">Consultas</a>
+          <a onclick="show('screen-7')">Salvas</a>
+          <a onclick="show('screen-10')">DJE</a>
+          <a onclick="show('screen-8')">Esquema</a>
+          <a onclick="show('screen-9')">Agregados</a>
+        </nav>
+        <div class="right"><span class="key-pill">chave: ••••3f7a</span></div>
+      </div>
+
+      <div class="screen-header">
+        <h2 class="mono">1000123-45.2023.8.26.0100</h2>
+        <span class="sub">Snapshot de 12/05/2026 12:04 UTC — <a>ver histórico (4 snapshots)</a></span>
+        <span class="tag existing">API existente: GET /api/process/.../snapshots,movimentos,links,peticoes</span>
+      </div>
+
+      <div class="screen-body">
+        <div class="crumbs"><a onclick="show('screen-2')">Início</a> › <a onclick="show('screen-5')">Resultados</a> › 1000123-45.2023.8.26.0100</div>
+
+        <!-- Deep search CTA (cross-cutting) -->
+        <div class="deep-search-cta" style="margin-bottom: 18px">
+          <div>
+            <strong>Busca profunda neste processo</strong>
+            <span style="opacity: 0.8">— ingere os PDFs deste processo e os torna pesquisáveis via FTS5. (Fase 3 — futuro.)</span>
+          </div>
+          <button class="btn">🔍 Iniciar busca profunda</button>
+        </div>
+
+        <!-- Header / metadata -->
+        <div class="card">
+          <h3>Capa do processo</h3>
+          <div class="grid-2">
+            <div>
+              <div><strong>Classe:</strong> Execução de Título Extrajudicial</div>
+              <div><strong>Assunto:</strong> Cédula de Crédito Bancário</div>
+              <div><strong>Outros assuntos:</strong> Inadimplemento; Juros</div>
+              <div><strong>Valor da ação:</strong> R$ 247.892,15</div>
+              <div><strong>Distribuído em:</strong> 14/03/2023</div>
+              <div><strong>Última movimentação:</strong> 15/04/2026</div>
+              <div><strong>Status:</strong> Em andamento</div>
+            </div>
+            <div>
+              <div><strong>Foro:</strong> Foro Central Cível</div>
+              <div><strong>Vara:</strong> 7ª Vara Cível</div>
+              <div><strong>Juiz:</strong> Dra. Mariana Souza</div>
+              <div><strong>Área:</strong> Cível</div>
+              <div><strong>Controle:</strong> 2023/00342</div>
+              <div><strong>Local físico:</strong> Arquivo Geral</div>
+              <div><strong>Foro (cód.):</strong> 0100 · TJSP · 2023</div>
+            </div>
+          </div>
+          <div style="margin-top: 14px">
+            <div><strong>Autor:</strong> Banco Itaú S/A</div>
+            <div><strong>Réu:</strong> J. Silva Comércio Ltda. — ME</div>
+            <div><strong>Outros processos do réu:</strong> 14 <a>(ver)</a></div>
+          </div>
+        </div>
+
+        <!-- Movimentações timeline -->
+        <div class="card">
+          <h3>Movimentações <span style="color:#8c93a6; font-weight:400">(22 · ordem decrescente)</span></h3>
+          <div class="row" style="margin-bottom: 12px">
+            <input type="text" placeholder="Filtrar por texto…" style="max-width: 320px">
+            <select style="width: 200px"><option>Todas as datas</option><option>Últimos 30 dias</option><option>Últimos 6 meses</option></select>
+            <span style="margin-left:auto; font-size: 0.82rem; color: #5b6378">22 totais</span>
+          </div>
+
+          <div class="timeline">
+            <div class="mov">
+              <div class="mov-head"><strong>15/04/2026</strong> · <span class="pill blue">ordem 22</span></div>
+              <div class="mov-body"><strong>Penhora on-line via SISBAJUD</strong></div>
+              <div class="mov-complementos">Determinada penhora de R$ 247.892,15 na conta do executado junto ao BB. Aguardando resposta do BACEN.</div>
+            </div>
+            <div class="mov">
+              <div class="mov-head"><strong>02/04/2026</strong> · <span class="pill blue">ordem 21</span></div>
+              <div class="mov-body"><strong>Despacho proferido</strong></div>
+              <div class="mov-complementos">Acolho o pedido do exequente. Expeça-se ofício ao BACEN.</div>
+            </div>
+            <div class="mov">
+              <div class="mov-head"><strong>22/03/2026</strong> · <span class="pill blue">ordem 20</span></div>
+              <div class="mov-body"><strong>Petição protocolada</strong></div>
+              <div class="mov-complementos">Petição do exequente requerendo penhora on-line. <a>📄 Doc #4711</a></div>
+            </div>
+            <div class="mov">
+              <div class="mov-head"><strong>10/03/2026</strong> · <span class="pill blue">ordem 19</span></div>
+              <div class="mov-body"><strong>Citação positiva</strong></div>
+              <div class="mov-complementos">Réu citado pessoalmente em 09/03/2026.</div>
+            </div>
+            <div class="mov" style="opacity: 0.7">
+              <div class="mov-head"><strong>+ 18 movimentações anteriores</strong></div>
+              <div class="mov-body"><a>Mostrar todas</a></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Linked processes -->
+        <div class="card">
+          <h3>Processos vinculados <span style="color:#8c93a6; font-weight:400">(3)</span></h3>
+          <table>
+            <thead><tr><th>Número</th><th>Relação</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="mono">1000200-55.2023.8.26.0100</td>
+                <td><span class="pill blue">apenso</span></td>
+                <td><a onclick="show('screen-6')">Abrir</a></td>
+              </tr>
+              <tr>
+                <td class="mono">0001234-78.2024.8.26.0100</td>
+                <td><span class="pill amber">incidente</span></td>
+                <td><a onclick="show('screen-6')">Abrir</a></td>
+              </tr>
+              <tr>
+                <td class="mono">0009876-12.2024.8.26.0100</td>
+                <td><span class="pill amber">incidente</span></td>
+                <td><a onclick="show('screen-6')">Abrir</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Petições -->
+        <div class="card">
+          <h3>Petições diversas <span style="color:#8c93a6; font-weight:400">(8)</span></h3>
+          <table>
+            <thead><tr><th>Ordem</th><th>Data</th><th>Tipo</th></tr></thead>
+            <tbody>
+              <tr><td>8</td><td>22/03/2026</td><td>Penhora on-line</td></tr>
+              <tr><td>7</td><td>15/01/2026</td><td>Conversão em executivo</td></tr>
+              <tr><td>6</td><td>04/12/2025</td><td>Cumprimento de sentença</td></tr>
+              <tr><td>5</td><td>11/09/2024</td><td>Habilitação de crédito</td></tr>
+              <tr><td colspan="3"><a>Mostrar todas (8)</a></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ═════════ Screen 7: Saved queries library ═════════ -->
+    <section class="screen" id="screen-7">
+      <div class="app-bar">
+        <span class="brand">POURSUITE</span>
+        <nav>
+          <a onclick="show('screen-2')">Início</a>
+          <a onclick="show('screen-4')">Consultas</a>
+          <a onclick="show('screen-7')">Salvas</a>
+          <a onclick="show('screen-10')">DJE</a>
+          <a onclick="show('screen-8')">Esquema</a>
+          <a onclick="show('screen-9')">Agregados</a>
+        </nav>
+        <div class="right"><span class="key-pill">chave: ••••3f7a</span></div>
+      </div>
+
+      <div class="screen-header">
+        <h2>Consultas salvas</h2>
+        <span class="sub">Biblioteca compartilhada do escritório · 12 consultas</span>
+        <span class="tag future">design contra API futura (armazenamento server-side)</span>
+      </div>
+
+      <div class="screen-body">
+        <div class="row" style="margin-bottom: 14px">
+          <input type="text" placeholder="Buscar consultas…" style="max-width: 320px">
+          <select style="width: 200px"><option>Todas</option><option>Recentes</option><option>Mais usadas</option></select>
+          <button class="btn" style="margin-left: auto" onclick="show('screen-4')">+ Nova consulta</button>
+        </div>
+
+        <div class="card" style="padding: 0">
+          <table>
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>Descrição</th>
+                <th>Última execução</th>
+                <th>Resultados</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Penhora SISBAJUD ≥ R$ 100k</strong></td>
+                <td>Execuções com bloqueio determinado e valor acima de R$ 100k.</td>
+                <td>ontem · 18h22</td>
+                <td class="num">142</td>
+                <td>
+                  <button class="btn small" onclick="show('screen-5')">▶ Executar</button>
+                  <button class="btn small ghost" onclick="show('screen-4')">✎ Editar</button>
+                  <button class="btn small ghost">📋 Copiar JSON</button>
+                  <button class="btn small danger">🗑</button>
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Sem movimento há 180+ dias</strong></td>
+                <td>Processos cuja última movimentação é anterior a 6 meses.</td>
+                <td>há 3 dias</td>
+                <td class="num">61</td>
+                <td>
+                  <button class="btn small" onclick="show('screen-5')">▶ Executar</button>
+                  <button class="btn small ghost" onclick="show('screen-4')">✎</button>
+                  <button class="btn small ghost">📋</button>
+                  <button class="btn small danger">🗑</button>
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Execução fiscal · vara 7</strong></td>
+                <td>Classe execução fiscal, foro central, 7ª vara.</td>
+                <td>há 1 semana</td>
+                <td class="num">28</td>
+                <td>
+                  <button class="btn small" onclick="show('screen-5')">▶ Executar</button>
+                  <button class="btn small ghost" onclick="show('screen-4')">✎</button>
+                  <button class="btn small ghost">📋</button>
+                  <button class="btn small danger">🗑</button>
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Decisão de mérito pendente</strong></td>
+                <td>movimento_count ≥ 10 sem sentença identificada.</td>
+                <td>há 2 semanas</td>
+                <td class="num">204</td>
+                <td>
+                  <button class="btn small" onclick="show('screen-5')">▶ Executar</button>
+                  <button class="btn small ghost" onclick="show('screen-4')">✎</button>
+                  <button class="btn small ghost">📋</button>
+                  <button class="btn small danger">🗑</button>
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Cumprimento prov. com apensos</strong></td>
+                <td>linked_count ≥ 1 AND class_type IN ("Cumprimento de Sentença", "Cumprimento Provisório").</td>
+                <td>há 1 mês</td>
+                <td class="num">17</td>
+                <td>
+                  <button class="btn small" onclick="show('screen-5')">▶ Executar</button>
+                  <button class="btn small ghost" onclick="show('screen-4')">✎</button>
+                  <button class="btn small ghost">📋</button>
+                  <button class="btn small danger">🗑</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="footer-hint">
+          <strong>Confirmação ao apagar:</strong> qualquer usuário do escritório pode editar ou apagar. O sistema pede confirmação ("Apagar esta consulta salva? Outros usuários a perderão.").
+        </div>
+      </div>
+    </section>
+
+    <!-- ═════════ Screen 8: Schema browser ═════════ -->
+    <section class="screen" id="screen-8">
+      <div class="app-bar">
+        <span class="brand">POURSUITE</span>
+        <nav>
+          <a onclick="show('screen-2')">Início</a>
+          <a onclick="show('screen-4')">Consultas</a>
+          <a onclick="show('screen-7')">Salvas</a>
+          <a onclick="show('screen-10')">DJE</a>
+          <a onclick="show('screen-8')">Esquema</a>
+          <a onclick="show('screen-9')">Agregados</a>
+        </nav>
+        <div class="right"><span class="key-pill">chave: ••••3f7a</span></div>
+      </div>
+
+      <div class="screen-header">
+        <h2>Esquema (dicionário de campos)</h2>
+        <span class="sub">Quais campos existem, que operadores aceitam, que valores aparecem</span>
+        <span class="tag future">design contra API futura (endpoint de valores distintos)</span>
+      </div>
+
+      <div class="screen-body">
+
+        <div class="card">
+          <h3>process_snapshot · Campos do cabeçalho</h3>
+          <table class="schema-table">
+            <thead><tr>
+              <th>Campo (API)</th><th>Rótulo (UI)</th><th>Tipo</th><th>Operadores válidos</th><th>Exemplos</th>
+            </tr></thead>
+            <tbody>
+              <tr>
+                <td class="field-name">process_number</td><td>Processo (CNJ)</td><td>texto</td>
+                <td class="ops">= != in not_in is_null is_not_null</td>
+                <td class="mono">1000123-45.2023.8.26.0100</td>
+              </tr>
+              <tr>
+                <td class="field-name">class_type</td><td>Classe</td><td>texto (enum de fato)</td>
+                <td class="ops">= != in not_in is_null is_not_null</td>
+                <td>Execução de Título Extrajudicial; Cumprimento de Sentença; Procedimento Comum Cível; …</td>
+              </tr>
+              <tr>
+                <td class="field-name">subject</td><td>Assunto</td><td>texto</td>
+                <td class="ops">= != in not_in is_null is_not_null</td>
+                <td>Cédula de Crédito Bancário; Inadimplemento; …</td>
+              </tr>
+              <tr>
+                <td class="field-name">outros_assuntos</td><td>Outros assuntos</td><td>texto</td>
+                <td class="ops">= != is_null is_not_null</td>
+                <td>Juros; Multa; <em>(população parcial — checar com is_not_null)</em></td>
+              </tr>
+              <tr>
+                <td class="field-name">value</td><td>Valor da ação (R$)</td><td>número (decimal)</td>
+                <td class="ops">= != &lt; &lt;= &gt; &gt;= is_null</td>
+                <td class="mono">100000.00 · 247892.15</td>
+              </tr>
+              <tr>
+                <td class="field-name">initial_date</td><td>Distribuído em</td><td>data (ISO ou DD/MM/AAAA)</td>
+                <td class="ops">= != &lt; &lt;= &gt; &gt;=</td>
+                <td class="mono">2023-03-14</td>
+              </tr>
+              <tr>
+                <td class="field-name">last_movement</td><td>Última movimentação</td><td>data</td>
+                <td class="ops">= != &lt; &lt;= &gt; &gt;=</td>
+                <td class="mono">2026-04-15</td>
+              </tr>
+              <tr>
+                <td class="field-name">status</td><td>Situação</td><td>texto</td>
+                <td class="ops">= != in not_in is_null</td>
+                <td>Em andamento; Suspenso; Arquivado</td>
+              </tr>
+              <tr>
+                <td class="field-name">plaintiff</td><td>Autor / Exequente</td><td>texto</td>
+                <td class="ops">= != is_null is_not_null</td>
+                <td>Banco Itaú S/A</td>
+              </tr>
+              <tr>
+                <td class="field-name">defendant</td><td>Réu / Executado</td><td>texto</td>
+                <td class="ops">= != is_null is_not_null</td>
+                <td>J. Silva Comércio Ltda. — ME</td>
+              </tr>
+              <tr>
+                <td class="field-name">other_processes</td><td>Outros processos do réu</td><td>inteiro</td>
+                <td class="ops">= != &lt; &lt;= &gt; &gt;= is_null</td>
+                <td class="mono">14</td>
+              </tr>
+              <tr>
+                <td class="field-name">foro</td><td>Foro</td><td>texto</td>
+                <td class="ops">= != in not_in is_null</td>
+                <td>Foro Central Cível; Foro Regional Santo Amaro</td>
+              </tr>
+              <tr>
+                <td class="field-name">vara</td><td>Vara</td><td>texto</td>
+                <td class="ops">= != in not_in is_null</td>
+                <td>7ª Vara Cível</td>
+              </tr>
+              <tr>
+                <td class="field-name">juiz</td><td>Juiz(a)</td><td>texto</td>
+                <td class="ops">= != in not_in is_null</td>
+                <td><em>operadores &lt; &gt; ordenam lexicograficamente — raramente útil</em></td>
+              </tr>
+              <tr>
+                <td class="field-name">controle</td><td>Controle</td><td>texto</td>
+                <td class="ops">= != is_null</td>
+                <td class="mono">2023/00342</td>
+              </tr>
+              <tr>
+                <td class="field-name">area</td><td>Área</td><td>texto (enum)</td>
+                <td class="ops">= != in not_in</td>
+                <td>Cível; Criminal; Fazenda Pública</td>
+              </tr>
+              <tr>
+                <td class="field-name">local_fisico</td><td>Local físico</td><td>texto</td>
+                <td class="ops">= != is_null</td>
+                <td>Arquivo Geral; Mesa do juiz</td>
+              </tr>
+              <tr>
+                <td class="field-name">outros_numeros</td><td>Outros números</td><td>texto</td>
+                <td class="ops">= != is_null</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td class="field-name">foro_code</td><td>Foro (cód.)</td><td>texto</td>
+                <td class="ops">= != in not_in</td>
+                <td class="mono">0100</td>
+              </tr>
+              <tr>
+                <td class="field-name">tribunal_code</td><td>Tribunal (cód.)</td><td>texto</td>
+                <td class="ops">= != in not_in</td>
+                <td class="mono">8.26</td>
+              </tr>
+              <tr>
+                <td class="field-name">distribution_year</td><td>Ano de distribuição</td><td>texto (AAAA)</td>
+                <td class="ops">= != in not_in &lt; &lt;= &gt; &gt;=</td>
+                <td class="mono">2023</td>
+              </tr>
+              <tr>
+                <td class="field-name">scrape_outcome</td><td>Resultado do scrape</td><td>texto (ok/erro)</td>
+                <td class="ops">= != in not_in</td>
+                <td>ok; not_found; captcha; timeout</td>
+              </tr>
+              <tr>
+                <td class="field-name">scrape_error</td><td>Erro do scrape</td><td>texto</td>
+                <td class="ops">= != is_null is_not_null</td>
+                <td>captcha; navegador estourou; …</td>
+              </tr>
+              <tr>
+                <td class="field-name">snapshot_ts</td><td>Timestamp do snapshot</td><td>ISO 8601 UTC</td>
+                <td class="ops">= != &lt; &lt;= &gt; &gt;=</td>
+                <td class="mono">2026-05-12T12:04:00.000+00:00</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <h3>movimento · Linha de movimentação (existe-em / contagem)</h3>
+          <table class="schema-table">
+            <thead><tr><th>Campo</th><th>Rótulo</th><th>Tipo</th><th>Operadores</th><th>Exemplos</th></tr></thead>
+            <tbody>
+              <tr><td class="field-name">ordem</td><td>Ordem</td><td>inteiro</td><td class="ops">= != &lt; &lt;= &gt; &gt;=</td><td>1, 2, …</td></tr>
+              <tr><td class="field-name">data_hora</td><td>Data/hora</td><td>data</td><td class="ops">= != &lt; &lt;= &gt; &gt;=</td><td class="mono">2026-04-15</td></tr>
+              <tr><td class="field-name">codigo</td><td>Código TPU</td><td>inteiro (raro — quase sempre NULL)</td><td class="ops">= != is_null is_not_null</td><td>—</td></tr>
+              <tr><td class="field-name">nome</td><td>Nome da movimentação</td><td>texto</td><td class="ops">= != in <strong>match</strong> (FTS5)</td><td>Penhora on-line via SISBAJUD</td></tr>
+              <tr><td class="field-name">complementos_text</td><td>Complementos (texto plano)</td><td>texto</td><td class="ops">= != is_null <strong>match</strong> (FTS5)</td><td>texto longo · FTS5 com OR / "frase" / NEAR</td></tr>
+              <tr><td class="field-name">cd_documento</td><td>Doc eSAJ vinculado</td><td>texto</td><td class="ops">= != is_null is_not_null</td><td class="mono">4711</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <h3>linked_process · Vinculados (apensos + incidentes)</h3>
+          <table class="schema-table">
+            <thead><tr><th>Campo</th><th>Rótulo</th><th>Tipo</th><th>Operadores</th><th>Valores</th></tr></thead>
+            <tbody>
+              <tr><td class="field-name">linked_number</td><td>Nº vinculado</td><td>texto</td><td class="ops">= != in not_in</td><td>CNJ</td></tr>
+              <tr><td class="field-name">relationship_type</td><td>Tipo de relação</td><td>texto (enum)</td><td class="ops">= != in not_in</td><td>apenso, incidente</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <h3>peticao · Petições diversas</h3>
+          <table class="schema-table">
+            <thead><tr><th>Campo</th><th>Rótulo</th><th>Tipo</th><th>Operadores</th></tr></thead>
+            <tbody>
+              <tr><td class="field-name">ordem</td><td>Ordem</td><td>inteiro</td><td class="ops">= != &lt; &lt;= &gt; &gt;=</td></tr>
+              <tr><td class="field-name">data</td><td>Data</td><td>data</td><td class="ops">= != &lt; &lt;= &gt; &gt;=</td></tr>
+              <tr><td class="field-name">tipo</td><td>Tipo</td><td>texto</td><td class="ops">= != in not_in is_null</td></tr>
+              <tr><td class="field-name">cd_documento</td><td>Doc eSAJ</td><td>texto</td><td class="ops">= != is_null is_not_null</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <h3>Operadores e modificadores</h3>
+          <table>
+            <thead><tr><th>Grupo</th><th>Operadores / chaves</th><th>Uso</th></tr></thead>
+            <tbody>
+              <tr><td>Escalares</td><td class="ops">= != &lt; &lt;= &gt; &gt;=</td><td>Em qualquer campo escalar (números, datas, textos exatos).</td></tr>
+              <tr><td>Listas</td><td class="ops">in, not_in</td><td>Lista não-vazia. Útil para enums (foro, classe, vara).</td></tr>
+              <tr><td>Nulidade</td><td class="ops">is_null, is_not_null</td><td>Verificar população de campos opcionais como outros_assuntos.</td></tr>
+              <tr><td>Texto (FTS5)</td><td class="ops">match</td><td>Só em <code>movimento.nome</code> e <code>movimento.complementos_text</code>. Sintaxe FTS5: <code>"frase"</code>, <code>OR</code>, <code>NEAR/5</code>, prefixo <code>penhora*</code>.</td></tr>
+              <tr><td>Composição</td><td class="ops">and, or, not</td><td>Recursivo. Aceita lista de sub-cláusulas.</td></tr>
+              <tr><td>Sub-cláusulas</td><td class="ops">movimento_any, linked_any, peticao_any</td><td>"Existe ao menos uma X tal que…"</td></tr>
+              <tr><td>Contagens</td><td class="ops">movimento_count, linked_count, peticao_count</td><td>Com operador escalar e valor inteiro.</td></tr>
+              <tr><td>Snapshot</td><td class="ops">"latest", "any", {"at": "ISO"}</td><td>Modificador temporal global da consulta.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ═════════ Screen 9: Aggregate views ═════════ -->
+    <section class="screen" id="screen-9">
+      <div class="app-bar">
+        <span class="brand">POURSUITE</span>
+        <nav>
+          <a onclick="show('screen-2')">Início</a>
+          <a onclick="show('screen-4')">Consultas</a>
+          <a onclick="show('screen-7')">Salvas</a>
+          <a onclick="show('screen-10')">DJE</a>
+          <a onclick="show('screen-8')">Esquema</a>
+          <a onclick="show('screen-9')">Agregados</a>
+        </nav>
+        <div class="right"><span class="key-pill">chave: ••••3f7a</span></div>
+      </div>
+
+      <div class="screen-header">
+        <h2>Visões agregadas</h2>
+        <span class="sub">Carteira Itaú · maio/2026 · 847 processos · padrões em todo o conjunto</span>
+        <span class="tag future">design contra API futura (endpoints agregados)</span>
+      </div>
+
+      <div class="screen-body">
+        <div class="crumbs"><a onclick="show('screen-2')">Início</a> › Agregados</div>
+
+        <div class="row" style="margin-bottom: 18px">
+          <label class="field" style="margin: 0">Base:</label>
+          <select style="width: 260px">
+            <option selected>Carteira inteira (847)</option>
+            <option>Apenas consulta atual: Penhora SISBAJUD ≥ R$ 100k (142)</option>
+          </select>
+          <label class="field" style="margin: 0 0 0 14px">Agrupar por:</label>
+          <select style="width: 180px">
+            <option selected>Foro</option>
+            <option>Vara</option>
+            <option>Classe</option>
+            <option>Juiz</option>
+            <option>Ano de distribuição</option>
+            <option>Última mov. (mês)</option>
+          </select>
+        </div>
+
+        <!-- Foro distribution -->
+        <div class="card">
+          <h3>Distribuição por Foro</h3>
+          <div class="bar-row"><span class="label">Foro Central Cível</span><div class="bar"><div style="width:78%"></div></div><span class="count">624 · 73,7%</span></div>
+          <div class="bar-row"><span class="label">Foro Regional Santo Amaro</span><div class="bar"><div style="width:14%"></div></div><span class="count">118 · 13,9%</span></div>
+          <div class="bar-row"><span class="label">Foro Regional Pinheiros</span><div class="bar"><div style="width:6%"></div></div><span class="count">48 · 5,7%</span></div>
+          <div class="bar-row"><span class="label">Foro Regional Tatuapé</span><div class="bar"><div style="width:3%"></div></div><span class="count">29 · 3,4%</span></div>
+          <div class="bar-row"><span class="label">Outros (4)</span><div class="bar"><div style="width:3%"></div></div><span class="count">28 · 3,3%</span></div>
+
+          <div style="font-size: 0.8rem; color: #5b6378; margin-top: 10px">
+            <a>Clique numa barra → ver os processos daquele Foro (resultados filtrados).</a>
+          </div>
+        </div>
+
+        <!-- Value histogram -->
+        <div class="card">
+          <h3>Histograma de valores (R$)</h3>
+          <div class="hist">
+            <div style="height: 20%"  data-label="&lt;10k"></div>
+            <div style="height: 40%"  data-label="10–50k"></div>
+            <div style="height: 70%"  data-label="50–100k"></div>
+            <div style="height: 95%"  data-label="100–250k"></div>
+            <div style="height: 65%"  data-label="250–500k"></div>
+            <div style="height: 38%"  data-label="500k–1M"></div>
+            <div style="height: 14%"  data-label="1–5M"></div>
+            <div style="height: 5%"   data-label="&gt;5M"></div>
+          </div>
+          <div style="margin-top: 28px; font-size: 0.82rem; color: #5b6378">
+            Mediana: R$ 178.420 · Média: R$ 312.880 · Total: R$ 264.929.146,30
+          </div>
+        </div>
+
+        <!-- Last-movement distribution -->
+        <div class="card">
+          <h3>Última movimentação — distribuição</h3>
+          <div class="bar-row"><span class="label">Últimos 30 dias</span><div class="bar"><div style="width:42%"></div></div><span class="count">356</span></div>
+          <div class="bar-row"><span class="label">30–90 dias</span><div class="bar"><div style="width:32%"></div></div><span class="count">271</span></div>
+          <div class="bar-row"><span class="label">90–180 dias</span><div class="bar"><div style="width:16%"></div></div><span class="count">135</span></div>
+          <div class="bar-row"><span class="label">180–365 dias</span><div class="bar"><div style="width:7%"></div></div><span class="count">61</span></div>
+          <div class="bar-row"><span class="label">&gt; 1 ano</span><div class="bar"><div style="width:3%"></div></div><span class="count">24</span></div>
+        </div>
+
+        <!-- Drill-down preview -->
+        <div class="card">
+          <h3>Drill-down: Foro Central Cível (624 processos)</h3>
+          <p style="font-size: 0.84rem; color: #5b6378; margin-bottom: 10px">
+            Os 5 processos de maior valor neste recorte:
+          </p>
+          <table>
+            <thead><tr><th>Processo</th><th>Vara</th><th>Valor</th><th>Última mov.</th><th></th></tr></thead>
+            <tbody>
+              <tr><td class="mono"><a onclick="show('screen-6')">1000131-53.2022.8.26.0100</a></td><td>3ª Vara Cível</td><td class="num">R$ 1.832.460,42</td><td>28/03/2026</td><td><button class="btn small muted">🔍 Deep</button></td></tr>
+              <tr><td class="mono"><a onclick="show('screen-6')">1000148-99.2021.8.26.0100</a></td><td>14ª Vara Cível</td><td class="num">R$ 1.244.012,00</td><td>11/04/2026</td><td><button class="btn small muted">🔍 Deep</button></td></tr>
+              <tr><td class="mono"><a onclick="show('screen-6')">1000201-22.2022.8.26.0100</a></td><td>7ª Vara Cível</td><td class="num">R$ 988.110,30</td><td>02/03/2026</td><td><button class="btn small muted">🔍 Deep</button></td></tr>
+              <tr><td class="mono"><a onclick="show('screen-6')">1000310-04.2023.8.26.0100</a></td><td>22ª Vara Cível</td><td class="num">R$ 712.080,00</td><td>14/02/2026</td><td><button class="btn small muted">🔍 Deep</button></td></tr>
+              <tr><td class="mono"><a onclick="show('screen-6')">1000412-77.2020.8.26.0100</a></td><td>4ª Vara Cível</td><td class="num">R$ 645.298,90</td><td>27/01/2026</td><td><button class="btn small muted">🔍 Deep</button></td></tr>
+            </tbody>
+          </table>
+          <div style="margin-top: 14px">
+            <button class="btn ghost" onclick="show('screen-5')">Ver todos os 624 como lista →</button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ═════════ Screen 10: DJE search ═════════ -->
+    <section class="screen" id="screen-10">
+      <div class="app-bar">
+        <span class="brand">POURSUITE</span>
+        <nav>
+          <a onclick="show('screen-2')">Início</a>
+          <a onclick="show('screen-4')">Consultas</a>
+          <a onclick="show('screen-7')">Salvas</a>
+          <a onclick="show('screen-10')">DJE</a>
+          <a onclick="show('screen-8')">Esquema</a>
+          <a onclick="show('screen-9')">Agregados</a>
+        </nav>
+        <div class="right"><span class="key-pill">chave: ••••3f7a</span></div>
+      </div>
+
+      <div class="screen-header">
+        <h2>Busca no DJE</h2>
+        <span class="sub">FTS5 sobre o corpus local (677 GB) — promover hits para a fila de scraping</span>
+        <span class="tag existing">API existente: GET /search · /search/export</span>
+      </div>
+
+      <div class="screen-body">
+        <div class="card">
+          <h3>Critérios</h3>
+          <div class="grid-2">
+            <div>
+              <label class="field">Palavras-chave (FTS5)</label>
+              <input type="text" value='SISBAJUD OR (penhora AND conta)'>
+            </div>
+            <div>
+              <label class="field">Termos a excluir</label>
+              <input type="text" value="execução fiscal">
+            </div>
+            <div>
+              <label class="field">Data inicial</label>
+              <input type="date" value="2026-01-01">
+            </div>
+            <div>
+              <label class="field">Data final</label>
+              <input type="date" value="2026-05-12">
+            </div>
+            <div>
+              <label class="field">Processo específico (opcional)</label>
+              <input type="text" placeholder="1234567-89.2023.8.26.0001">
+            </div>
+            <div>
+              <label class="field">Resultados por página</label>
+              <select><option>25</option><option>50</option><option selected>100</option><option>250</option></select>
+            </div>
+          </div>
+          <div class="row" style="margin-top: 14px">
+            <button class="btn">🔎 Buscar no DJE</button>
+            <button class="btn ghost">⬇ Exportar CSV</button>
+            <button class="btn ghost">Limpar</button>
+            <span style="margin-left: auto; font-size: 0.82rem; color: #5b6378">142 processos · 384 menções · página 1/2</span>
+          </div>
+        </div>
+
+        <div class="card" style="padding: 0">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:36px"><input type="checkbox"></th>
+                <th>Processo</th>
+                <th>Menções</th>
+                <th>Última data</th>
+                <th>Já no banco?</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><input type="checkbox" checked></td>
+                <td class="mono"><a>1000123-45.2023.8.26.0100</a> <span style="font-size:0.74rem; color:#5b6378">(3 menções · clique para expandir)</span></td>
+                <td>3</td>
+                <td>15/04/2026</td>
+                <td><span class="pill green">snapshot recente</span></td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" checked></td>
+                <td class="mono"><a>1000789-21.2024.8.26.0100</a></td>
+                <td>2</td>
+                <td>22/04/2026</td>
+                <td><span class="pill amber">snapshot &gt; 30d</span></td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" checked></td>
+                <td class="mono"><a>1001500-65.2022.8.26.0100</a></td>
+                <td>5</td>
+                <td>30/04/2026</td>
+                <td><span class="pill gray">não está no banco</span></td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" checked></td>
+                <td class="mono"><a>1002091-12.2023.8.26.0100</a></td>
+                <td>1</td>
+                <td>02/05/2026</td>
+                <td><span class="pill gray">não está no banco</span></td>
+              </tr>
+              <tr>
+                <td><input type="checkbox"></td>
+                <td class="mono"><a>1002233-44.2025.8.26.0100</a></td>
+                <td>1</td>
+                <td>08/05/2026</td>
+                <td><span class="pill green">snapshot recente</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="row" style="margin-top: 14px">
+          <span style="font-size: 0.82rem; color: #5b6378"><strong>4 selecionados</strong> · 2 precisam de scrape</span>
+          <button class="btn" onclick="show('screen-3')">Promover para scraping →</button>
+          <button class="btn ghost" onclick="show('screen-5')">Tratar como consulta sobre o banco →</button>
+        </div>
+
+        <div class="footer-hint">
+          <strong>Fluxo:</strong> escolha um sub-conjunto dos hits e mande para o pipeline de scraping (tela 3) ou trate o conjunto como uma carteira efêmera para consultar diretamente.
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  // Tiny click-through router. No real network calls.
+  function show(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === id));
+    document.querySelectorAll('.sidebar nav a').forEach(a => a.classList.toggle('active', a.dataset.target === id));
+    window.scrollTo(0, 0);
+  }
+  document.querySelectorAll('.sidebar nav a').forEach(a => {
+    a.addEventListener('click', e => { e.preventDefault(); show(a.dataset.target); });
+  });
+
+  // Query-builder mode toggle (Visual vs Text)
+  function qbMode(mode) {
+    document.getElementById('qb-visual').style.display = mode === 'visual' ? '' : 'none';
+    document.getElementById('qb-text').style.display   = mode === 'text'   ? '' : 'none';
+    document.querySelectorAll('.qb-toggle button').forEach(b => {
+      b.classList.toggle('active', b.textContent.toLowerCase().includes(mode === 'visual' ? 'visual' : 'texto'));
+    });
+  }
+
+  // Default: show screen 1 (Login)
+  show('screen-1');
+</script>
+
+</body>
+</html>

@@ -1,10 +1,23 @@
-"""Serve the single-page HTML frontend (Search + Extract tabs)."""
+"""Serve the single-page HTML frontends.
+
+GET /        — the new query-builder SPA (UI Phase 2.5; 10 screens; vanilla JS).
+GET /legacy  — the legacy parameter-form SPA (Search + Extract tabs).
+
+The new SPA's HTML lives alongside this module as `spa_v2.html` so it can be
+edited as a real HTML file (syntax highlighting, line numbers) rather than a
+multi-thousand-line triple-quoted string. Read once at module load.
+"""
+from pathlib import Path
+
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
 router = APIRouter(include_in_schema=False)
 
-_HTML = """<!DOCTYPE html>
+_SPA_V2_PATH = Path(__file__).parent / "spa_v2.html"
+_HTML_V2 = _SPA_V2_PATH.read_text(encoding="utf-8")
+
+_LEGACY_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1235,5 +1248,16 @@ _HTML = """<!DOCTYPE html>
 
 @router.get("/", response_class=HTMLResponse)
 def serve_frontend():
-    """Serve the search + extract frontend."""
-    return _HTML
+    """Serve the UI Phase 2.5 query-builder SPA."""
+    return _HTML_V2
+
+
+@router.get("/legacy", response_class=HTMLResponse)
+def serve_legacy_frontend():
+    """Serve the legacy parameter-form SPA (Search + Extract tabs).
+
+    Kept available for the transition month per the UI Phase 2.5 brief. The
+    new SPA at `/` provides equivalent and additional functionality; this
+    route can be removed once the operator is comfortable.
+    """
+    return _LEGACY_HTML

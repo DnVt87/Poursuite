@@ -67,7 +67,12 @@ def _run_extraction(
 
     def on_full_record(result: ScrapeResult) -> None:
         # Persist first; failure to persist shouldn't block the in-memory flow.
-        if snapshot_store is not None:
+        # Skip errored scrapes — they have no useful header/movs/linked/peti
+        # data and would just pollute queries with empty rows that look like
+        # genuinely-empty cases. The error is still visible in the job's
+        # in-memory results dict so the upload UI can surface it during the
+        # scrape.
+        if snapshot_store is not None and not result.process_data.error:
             try:
                 snapshot_store.save_snapshot(
                     process_data=result.process_data,

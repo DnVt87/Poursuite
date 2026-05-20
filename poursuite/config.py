@@ -3,6 +3,10 @@ from pathlib import Path
 
 # --- Directory paths (all overridable via environment variables) ---
 DB_DIR: Path = Path(os.environ.get("POURSUITE_DB_DIR", "D:/Poursuite/Databases"))
+# Holds esaj_snapshots.db and process_groups.json. Defaults to DB_DIR — the
+# snapshot store is colocated with the DJE shards today, but this env var
+# lets the operator move it if disk pressure on D: changes.
+SNAPSHOT_DIR: Path = Path(os.environ.get("POURSUITE_SNAPSHOT_DIR", str(DB_DIR)))
 OUTPUT_DIR: Path = Path(os.environ.get("POURSUITE_OUTPUT_DIR", "C:/Poursuite/SearchResults"))
 ESAJ_OUTPUT_DIR: Path = Path(os.environ.get("POURSUITE_ESAJ_OUTPUT_DIR", "C:/Poursuite/eSAJ"))
 LOG_DIR: Path = Path(os.environ.get("POURSUITE_LOG_DIR", "C:/Poursuite/Logs"))

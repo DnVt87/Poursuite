@@ -1,8 +1,8 @@
-# Poursuite — Strategic Plan (v2)
+# Poursuite — Strategic Plan (v3)
 
-> Type A strategy document, second revision. Companion to `ARCHITECTURE.md` (which describes the system as built). When the two disagree, code is authoritative — update both.
+> Type A strategy document, third revision. Companion to `ARCHITECTURE.md`. When the two disagree, code is authoritative — update both.
 >
-> Last updated: May 2026. Supersedes v1 (May 2026, pre-probe). The v1 plan was written before we ran probes against DataJud, before the eSAJ inventory pass, and before the strategic reframe of what "good filtering" actually means for Poursuite. This rewrite captures what we learned.
+> Last updated: May 2026. Supersedes v2. The v2 plan was written before Phase 1 (extra eSAJ header fields + CNJ origem derivation) shipped, and before the strategic reframe from "build a filter" to "build a search engine." This rewrite captures both shifts.
 
 ---
 
@@ -10,335 +10,311 @@
 
 Poursuite buys distressed judicial credit at heavy discounts and recovers what it can. The economic edge is **selection** — picking recoverable cases out of large seller portfolios that nobody has individually analyzed. Two inflows:
 
-- **Seller-provided lists.** A creditor hands over a CSV of process numbers and asks for a price. We triage and decide what fraction is worth bidding on.
-- **Self-discovered candidates.** Our DJE corpus surfaces cases matching patterns indicating recoverability that current creditors haven't noticed.
+- **Seller-provided lists.** A creditor hands over a CSV of process numbers and asks for a price. We surface the recoverable subset.
+- **Self-discovered candidates.** Our DJE corpus reveals cases matching patterns indicating recoverability that current creditors haven't noticed.
 
-In both flows, the scarce resource is **expert lawyer attention** (currently your brother). Everything we build multiplies that attention — eliminates cases unworthy of a minute of review, surfaces cases that deserve full focus, and captures data he'd otherwise gather manually.
+In both flows, the scarce resource is **expert lawyer attention** (currently your brother). Everything we build multiplies that attention — eliminates cases unworthy of a minute of review, surfaces cases that deserve full focus, captures data he'd otherwise gather manually, and lets him ask new questions of the data without waiting on engineers.
 
-**The system never bids autonomously.** It decides what reaches a human's desk and in what order.
-
----
-
-## 2. The strategic reframe (the most important section)
-
-The v1 plan implicitly framed the goal as "build an AI that triages cases like your brother does." That framing was wrong, and getting it wrong would have wasted months.
-
-**What your brother actually does in his successful cases** — uncovering hidden assets via family connections, spotting technical defects in títulos executivos, recognizing mispriced lots a big fund overlooked, catching procedural irregularities — **is inherently lawyer work.** It requires judgment, legal expertise, and contextual reasoning that we cannot realistically encode. Trying to automate it leads to either (a) brittle rule systems that fail on the edge cases that actually matter, or (b) LLM systems expensive enough to wipe out the arbitrage they're meant to enable.
-
-**What Poursuite actually needs is the layer below that** — a portfolio-level pre-filter that eliminates obvious losers before any human reviews them. Coarse signals, not deep analysis. The point is to turn 5,000 cases into 200 worth a lawyer's attention, ranked. The 200 then get genuine human judgment.
-
-The signals that matter for the pre-filter are **counterparty profile** and **competition density**, not legal analysis:
-
-- **Creditor type.** Is the original creditor a bank (variable, often exploitable), a hedge fund / securitizadora (already optimized, no edge), a specialized recovery firm (won't let go, no opportunity), or a natural person / small company (amateur, opportunity)? This single classification predicts a lot.
-- **Debtor's process universe size.** A debtor with 2 active executions is qualitatively different from a debtor with 50. Recoverability per case drops sharply at high counts because competing creditors fight over the same assets.
-- **Process age × staleness.** Old + stalled cases have different profiles than active or recent ones.
-- **Process value.** Below thresholds where legal cost outweighs recovery; above thresholds where seller diligence already happened.
-- **Class and subject.** Some classes recover better — your brother has tacit knowledge of which.
-
-All of these are extractable from what we already have (or are about to add). None requires an LLM. None requires the connection graph. The first product is *much smaller* than v1 implied.
-
-The connection graph and the LLM tier are still on the roadmap — but they're for the cases *that pass the pre-filter*, not for the filter itself. They serve investigation, not triage.
+**The system never bids autonomously.** It surfaces, it doesn't decide.
 
 ---
 
-## 3. The four layers (renumbered, clarified)
+## 2. The framing — search engine, not filter (the most important section)
+
+**Earlier versions of this plan framed the goal as "build a filter."** A filter has rules: the system runs them, scores cases, outputs a ranking. Rules are the system's logic; the lawyer is the consumer of the output.
+
+**That framing was wrong.** Every portfolio Poursuite triages is different. A seller list of mortgage cases needs different filters than a list of commercial credit; the rules that work for one batch don't work for the next. Building a filter would have meant either (a) writing rules generic enough to be useless, or (b) re-tuning rules per portfolio and discovering we'd built an inflexible interface around frozen logic.
+
+**The right framing is search engine.** The system holds structured data extracted from public sources. The lawyer composes queries against that data — different queries for different portfolios, different queries as he learns what works. The system is a data substrate plus a query interface; the logic lives in the lawyer's queries, not in the system's code.
+
+What this changes:
+
+- **No built-in filters.** "Creditor is a bank" or "movimento contains 'penhora'" are not default features. They're queries the lawyer composes when he wants them.
+- **Curated lists are reference data, not classifiers.** A list of bank names lives in the system so the lawyer can query against it ("creditor IN bank_list"), but the system doesn't auto-classify creditors.
+- **The data model is the product.** What fields exist, what they mean, what values they can take. The lawyer's expertise is in knowing what to ask; our job is making sure the data is there to answer it.
+- **The interface is a query builder, not a parameter form.** The lawyer needs to compose multi-clause queries, save them, refine them, share them. That's a bigger UI build than v2 assumed.
+
+This framing scales correctly. As Poursuite encounters new portfolio types, new market conditions, new lawyer insights, the system doesn't need code changes — it needs new queries.
+
+Cases your brother handles via deep legal expertise (hidden assets via family connections, technical defects in títulos, mispriced lots) remain his work. The system surfaces candidates; he investigates. The valuable connections happen in his head, informed by what we surface.
+
+---
+
+## 3. The four layers (unchanged from v2)
 
 ```
                   ┌─────────────────────────────────────────────┐
                   │  Layer 4 — Connection graph / investigation │
                   │  Receita CNPJ + cross-source linking.       │
-                  │  For cases promoted from Layer 2/3 that     │
-                  │  warrant deeper investigation. Not a filter.│
+                  │  For deep investigation on promoted cases.  │
                   └────────────────────▲────────────────────────┘
                                        │
                   ┌────────────────────┴────────────────────────┐
                   │  Layer 3 — DataJud enrichment               │
                   │  Cross-tribunal debtor history.             │
-                  │  "How many executions does this debtor have │
-                  │  nationally?" — only practical source.      │
+                  │  National process universe per debtor.      │
                   └────────────────────▲────────────────────────┘
                                        │
                   ┌────────────────────┴────────────────────────┐
-                  │  Layer 2 — eSAJ scrape (the pre-filter)     │
-                  │  Per-process structured data. Header fields,│
-                  │  parties, value, movimentações, linked      │
-                  │  processes. The portfolio pre-filter runs   │
-                  │  on this data.                              │
+                  │  Layer 2 — eSAJ scrape (search substrate)   │
+                  │  Per-process structured data + queryable    │
+                  │  movimentações timeline + linked processes. │
+                  │  The lawyer's primary search target.        │
                   └────────────────────▲────────────────────────┘
                                        │
                   ┌────────────────────┴────────────────────────┐
                   │  Layer 1 — DJE corpus query                 │
                   │  FTS5 over 677 GB of TJSP publications.     │
-                  │  Candidate discovery via keywords / patterns│
-                  │  in published acts. Already exists.         │
+                  │  Discovery via published acts. Built.       │
                   └─────────────────────────────────────────────┘
 ```
 
-Each layer takes structured input from below and produces structured output. Layers are independent — each ships and delivers value before the next exists.
+Each layer takes structured input from below and produces structured output. Layers ship independently.
 
-**The eventual LLM tier is not a layer.** It's a *capability* that can be added on top of Layer 2's output (with or without Layers 3/4) once we have ground-truth labels to evaluate it against. The v1 plan put it as Layer 3 of three; that was wrong. LLM analysis is the polish on a working pipeline, not a layer of the pipeline itself.
+**The eventual LLM tier is a capability, not a layer.** It plugs in on top of Layer 2's data when (and if) we have ground-truth labels to evaluate it against. It is not on the critical path.
 
 ---
 
-## 4. Where we actually are (May 2026)
+## 4. Shallow vs. deep data — a critical distinction
+
+The system holds two kinds of data, and they obey different rules.
+
+**Shallow data** is small, permanent, ingested in bulk:
+- Header fields (Classe, Foro, Vara, Juiz, value, parties, etc.)
+- Movimentações timeline (dates, codes, names, complements text)
+- Linked processes / apensos / incidentes (process numbers, types)
+- Petição metadata (date, type, page count — not content)
+- Document IDs (`cdDocumento` references, names, types — not document text)
+
+This is the lawyer's primary search target. It's what queries hit. It's what gets stored forever (or until we deliberately archive a case).
+
+**Deep data** is large, ephemeral, fetched on demand:
+- Full text of document PDFs (despachos, sentenças, petição content)
+- OCR of scanned documents
+- Anything that requires per-PDF downloading + extraction
+
+Deep data exists only for cases that earned a lawyer's attention. It is **download-on-demand** ("deep search this case"), **extract-then-discard** (text goes to SQLite, PDF deleted), and **evict-when-cold** (text rows expire after N months of no access; can be re-fetched if the case becomes interesting again).
+
+Storage discipline for deep data:
+
+1. Lawyer requests deep search on a case.
+2. System downloads PDFs from the case's `cdDocumento` references (shallow scrape already captured the IDs).
+3. Text extracted/OCRed and stored in a `documents` table, compressed.
+4. PDFs deleted; only the extracted text remains.
+5. `last_accessed_at` timestamp tracked.
+6. Periodic eviction: rows untouched for N months are dropped. Document IDs remain in shallow data, so re-fetching is straightforward.
+
+**Why this matters:** PDFs are 100KB–2MB; compressed text is 5–50KB. ~10× savings. More importantly, this discipline keeps the system's footprint bounded as the lawyer deep-searches more cases over time. Without eviction, deep storage grows monotonically; with it, deep storage tracks the lawyer's active working set.
+
+**What this is NOT:** lossy archival. Eviction is reversible — re-running deep search re-populates the text. Nothing is permanently lost.
+
+Cases gated behind `#liberarAutoPorSenha` (per-case password) cannot be deep-searched automatically; the deep-search UI flags these for manual handling by the lawyer.
+
+---
+
+## 5. Where we actually are (May 2026)
 
 Built and verified:
 
-- **Layer 1** — DJE corpus FTS5 search. Works. ~677 GB across time-partitioned shards, indexed by paragraph, queryable through the API and CLI.
-- **Layer 2 (partial)** — eSAJ scraper. Extracts ~10 header fields plus parties. **The inventory pass identified 8 more header fields available on the same page that we don't extract**, plus 6 structural sections (Partes, Movimentações, Petições, Incidentes, Apensos, Audiências) we either partially capture or don't capture at all. The Movimentações timeline is the biggest gap — fully present on the page, completely unscraped today.
-- **Maintenance orchestrator** — single `update_database.py` runs the full Download → Parse → Split → Optimize → Publish pipeline. Idempotent, resumable, with disk-space preflight.
-- **Probe infrastructure** — `poursuite/probes/` lives in the repo as a long-term diagnostic. DataJud and eSAJ-inventory probes are wired in. Receita is stubbed.
+- **Layer 1** — DJE corpus FTS5 search. ~677 GB across time-partitioned shards. Queryable through API and CLI.
+- **Layer 2 (partial)** — eSAJ scraper extracts 22 fields per case after Phase 1 (commit `78d8dcb`, May 2026):
+  - Original 11 fields (classe, assunto, valor, parties, status, last_movement, distribuição, etc.)
+  - 8 inventory-verified header fields added: Foro, Vara, Juiz, Controle, Outros assuntos, Outros números, Local Físico, Área
+  - 3 fields derived from the CNJ process number itself: foro_code, tribunal_code, distribution_year
+  - Plus `foro_name` resolved via the vendored TJSP origem table (614 codes, official CNJ source)
+- **Maintenance orchestrator** — `update_database.py` runs Download → Parse → Split → Optimize → Publish. Idempotent, resumable.
+- **Probe infrastructure** — `poursuite/probes/` lives in the repo as a long-term diagnostic.
 
-Verified via probes (not via documentation — these are empirical):
+Verified empirically via probes (not from documentation):
 
-- DataJud's public API returns capa + movimentações for 6/6 sample TJSP processes including the 1990 case.
-- DataJud strips party data at the index level (5-way verified — no way to retrieve names/CPFs).
-- DataJud's `valorCausa` is empty for TJSP (confirmed). Process value comes from eSAJ.
-- DataJud latency is **unbounded** — observed range 21 days to 616 days behind reality.
-- TPU movement codes are NOT national-uniform — TJSP locally relabels some codes (11383 nationally documented as "Penhora", TJSP returns "Ato ordinatório"). Code-based detection is per-tribunal, not portable.
-- eSAJ consulta is a single-document page with `<h2 class='tituloDoBloco'>` blocks, not real tabs. Same DOM at every viewport.
+- DataJud's public API returns capa + movimentações for sampled processes including pre-2000 cases.
+- DataJud strips party data at index level (5-way verified — no way to retrieve names/CPFs via the public API).
+- DataJud's `valorCausa` is empty for TJSP.
+- DataJud latency is unbounded — observed 21 days to 616 days behind reality.
+- TPU movement codes are not national-uniform. TJSP locally relabels codes; code-based detection is per-tribunal. Text matching on `movimento.nome` is more reliable than code matching.
+- eSAJ consulta is a single-document page with `<h2 class='tituloDoBloco'>` blocks, not real tabs.
 
 Not yet built:
 
-- The 8 additional eSAJ header fields. Production extraction of Movimentações timeline. Production extraction of linked processes / apensos / incidentes (currently only counted, not enumerated).
-- The pre-filter itself (Layer 2 application).
-- DataJud integration (Layer 3).
-- Receita ingestion (Layer 4).
-- Any LLM tier.
+- **Movimentações timeline extraction in production.** The shallow scrape currently captures header + parties but not the movement timeline. This is Phase 2.
+- **Apensos / Incidentes enumeration.** Currently counted, not enumerated.
+- **Petição metadata + document ID capture.** Documents are visible in the inventory but not in the scraper output.
+- **Snapshot store.** No persistence of scrape results across runs. Currently each scrape is throwaway.
+- **The query interface.** The current API exposes parameter-form search; the search-engine framing wants a query builder. Bigger interface change than v2 assumed.
+- **Layer 3 (DataJud), Layer 4 (Receita), LLM tier.** All deferred.
 
 ---
 
-## 5. Layer 2 — what the pre-filter looks like
+## 6. Layer 2 — the search substrate
 
-This is the next workstream. The pre-filter is the first real product.
+This is the next workstream and what shipping value depends on. Phase 1 closed half of it.
 
-### 5.1 Inputs
+### 6.1 What the substrate contains (target state)
 
-Per-process structured data extracted from eSAJ. The current scraper gets the header; the expanded scraper will get everything the inventory pass surfaced. Specifically:
+Per case, after Phase 2 ships:
 
-**Header fields to add to extraction** (verified empirically):
-- `Foro` — the comarca/forum (e.g., "Foro Central Cível", "Foro de Sorocaba")
-- `Vara` — specific division within the foro
-- `Juiz` — assigned judge
-- `Controle` — internal foro numbering
-- `Outros assuntos` — secondary subjects (5/13 cases in inventory had this)
-- `Outros números` — alternate process numbers, only on legacy cases (2/13 in inventory)
-- `Local Físico` — physical location, only on legacy cases (1/13)
-- `Área` — area of law (always "Cível" in our sample, low-value but cheap to capture)
+**Header (already shipped in Phase 1):**
+- 22 fields per `ProcessData`, plus snapshot timestamp.
 
-**Plus three fields derivable from the CNJ process number itself** via a lookup table (no scraping needed):
-- Foro/origem (deducible from last 4 digits `OOOO`)
-- Tribunal (deducible from positions 18-19 `TR`)
-- Year of distribution (deducible from positions 14-17 `AAAA`)
+**Movimentações timeline (Phase 2):**
+- Every movimento as a structured row: order, dataHora, codigo, nome, complementos (structured + text). Indexed for FTS and date queries.
 
-**Structural sections to enumerate** (currently uncaptured):
-- **Movimentações** — the full procedural timeline. Critical for filtering: presence/absence of citação, penhora events, embargos, suspensions. 70–470 rows per case in our sample.
-- **Apensos / Incidentes** — linked process numbers (embargos à execução, IDPJ incidents). Currently we count "other_processes by defendant" but don't enumerate formal linkages.
-- **Petições diversas** — petition listings with metadata. Useful for procedural density signal.
-- **Histórico de classes** — conditional section showing procedural reclassification history. Rare but high-signal when present (1/13 in inventory). Worth capturing where it exists.
+**Linked structure (Phase 2):**
+- Apensos / Incidentes / dependent processes enumerated with their CNJ numbers and relationship type.
+- Petição listings with metadata (date, type, count, page count) and `cdDocumento` IDs.
 
-### 5.2 The pre-filter rules
+**Reference data:**
+- Vendored CNJ origem table (already in Phase 1).
+- Curated creditor name lists, class blacklists, etc. — markdown files in the repo, edits via PR.
 
-The actual filtering logic. None of these requires an LLM:
+### 6.2 What the substrate enables the lawyer to query
 
-**Creditor classifier.** Regex + curated name list. Banks have predictable razão sociais (`BANCO BRADESCO S.A.`, `ITAÚ UNIBANCO`). Hedge funds and securitizadoras have characteristic suffixes (`FIDC`, `SECURITIZADORA DE CRÉDITOS`). Specialized recovery firms are knowable by name (curated by your brother). Natural persons have non-corporate name shapes. Output: one of {bank, hedge_fund, recovery_specialist, natural_person, small_business, unknown}. Trivial to build; ~95% accuracy expected on common cases.
+These are example queries, not built-in features. The interface lets the lawyer compose any of them, save them, refine them:
 
-**Debtor process count.** Already captured as `contadorDeProcessos`. Threshold buckets configurable: 1-2 = potentially recoverable, 3-10 = harder, 10+ = trash. Refined later with DataJud cross-tribunal count (Layer 3).
+- "Distribution between 2018-2020 AND value > R$100k AND no movimento containing 'penhora' since 2022" → stalled mid-value cases unlikely to have active recovery
+- "Plaintiff IN bank_list AND defendant_other_process_count < 3" → bank-creditor cases with rare defendants
+- "Movimento contains 'embargos à execução' AND distribution < 2018" → contested old cases
+- "Foro IN [list] AND class = 'Execução de Título Extrajudicial'" → geographic filtering for a specific portfolio
+- "Defendant name appears in DJE corpus with frequency > N" → debtors with structural noise in publications
 
-**Value tier.** Already captured as `valorAcaoProcesso`. Configurable thresholds by case class.
+The product isn't these queries. The product is being able to write any of these.
 
-**Process age + staleness.** Distribution date and last movement, both already captured. Various rules: very old + stalled = prescrição risk (flag for human review, never auto-discard); very recent = probably still in citação phase.
+### 6.3 The interface
 
-**Class blacklist.** Some classes (small-claims Juizado Especial under threshold, etc.) → low priority. Curated by your brother.
+Bigger interface change than v2 assumed. The current SPA was built around parameter-form search; the search-engine framing wants:
 
-**Prescrição risk estimate.** Coarse — flag any case where (today − distribuição) > (5 years + suspensão buffer). Refined by Layer 2's Movimentações data once we extract that, because the actual prescrição clock starts from "primeira tentativa infrutífera" which is a movement we'd need to identify (CPC art. 921, Lei 14.195/2021). v0 is the coarse age-based flag; v1 reads the timeline.
+- A query builder UI that exposes the full schema (column names, types, value enumerations, sample values)
+- The ability to save named queries with descriptions
+- Result sets the lawyer can drill into, sort, re-filter
+- Some way to compose queries from saved building blocks
+- Eventually: query sharing across team members (low priority for single-user current state)
 
-**Linked process density.** Once Apensos / Incidentes are extracted, count them. Many embargos / many IDPJ incidents = legally contested case = different recovery profile.
+This is significant frontend work. Probably the long-pole task after Phase 2's data extraction lands.
 
-### 5.3 Output
+### 6.4 What Phase 2 needs to do
 
-A scored, ranked list:
+In rough order:
 
-- Continuous score (0-100, for sorting)
-- Bucket (`dead`, `low`, `mid`, `high`, `review_required`)
-- Reason codes (`creditor_specialized_fund`, `debtor_50plus_processes`, `value_below_threshold`, `prescription_risk_imminent`, etc.)
-- Underlying data backing each reason
+1. **Extract Movimentações.** Use the eSAJ inventory walker's section-walking logic adapted for production. Capture every movimento with order, dataHora, codigo, nome, structured complements, and raw complement text.
+2. **Extract Apensos / Incidentes / linked processes.** Enumerate the CNJ numbers and types.
+3. **Extract Petição metadata + `cdDocumento` IDs.** Shallow only — not document content.
+4. **Design the snapshot store** (new SQLite, separate from DJE corpus). Schema decisions to make:
+   - Append-per-scrape or scrape-then-diff (lean toward diff)
+   - Indexing strategy (FTS5 on movimento.nome and complement text; B-tree on dates, values, codes)
+   - Schema designed with deep-search-future in mind (a `documents` table that's empty by default)
+5. **Wire into the existing API** as queryable endpoints. Defer the query builder UI to a separate workstream.
 
-The lawyer reviews top-down. The system makes the case for or against; the human decides.
+### 6.5 What Phase 2 explicitly does NOT include
 
-### 5.4 What's needed before this ships
+- The query builder UI (separate workstream after data lands)
+- Deep search / PDF ingestion (Phase 3)
+- Layer 3 DataJud integration
+- Any LLM work
 
-1. **Expand the eSAJ scraper** to extract the additional header fields and the structural sections. Read the inventory output before designing — the prejudgment risk we worked hard to avoid still applies.
-2. **Build the snapshot store** so scraped data persists across runs (already partly in scope from the maintenance refactor — extend the schema to cover Movimentações timeline).
-3. **Build the rule engine** as a separate module from the scraper. Rules should be loadable and tunable without code deploys (probably YAML for thresholds and curated lists, code for the predicates themselves).
-4. **Wire ranking/output** into the existing API + CLI.
-
-### 5.5 Open questions
-
-- **Rule storage format.** Pure code is most powerful but requires deploys. YAML thresholds + code predicates is the obvious compromise. Final choice can wait until we have 3-4 rules built and feel the friction.
-- **How seller lists get ingested.** Existing `CSVProcessExtractor` extracts process numbers from arbitrary CSVs — reusable as-is. If sellers provide other metadata (their own value estimates, etc.) we may want to preserve it; not urgent.
-- **Curated lists (creditor names, class blacklists) — how to maintain them.** Probably markdown files in the repo, version-controlled. Edits flow through PR review. Your brother is the editor.
+Estimated effort: 2-3 weeks for Phase 2 data extraction + snapshot store. Query builder UI is its own multi-week build.
 
 ---
 
-## 6. Layer 3 — DataJud enrichment
+## 7. Phase 3 — Deep search
 
-Smaller than v1 implied, but real.
+After Phase 2 lands, deep search becomes the next workstream. Per §4:
 
-### 6.1 What DataJud gives us
+- Per-case, lawyer-initiated.
+- Downloads PDFs from the case's `cdDocumento` references.
+- Extracts/OCRs text into the snapshot store's `documents` table (compressed, FTS-indexed).
+- Deletes the original PDFs.
+- Tracks `last_accessed_at`; periodic eviction of cold rows.
+- Flags `#liberarAutoPorSenha`-gated documents for manual lawyer handling.
 
-After empirical verification:
-- Cross-tribunal coverage of capa + movimentações for any CNJ process number
-- All 91 tribunals via one API, one key
-- Pre-2000 coverage confirmed (1990 case returned cleanly)
-- Hours-to-616-days behind reality — usable for historical context, not real-time
+Once deep search ships, the lawyer's queries can hit document text alongside movimento text. A query like "defendant X AND any document contains 'fraude'" becomes meaningful.
 
-What it does NOT give us:
-- Party names, CPFs, CNPJs (stripped at index level — verified five ways)
-- Document text
-- TJSP `valorCausa` (empty in practice)
-- Real-time anything
-
-### 6.2 The single use case that matters
-
-**Cross-tribunal debtor universe.** Once we have the debtor's name from eSAJ (Layer 2), we can search DataJud by name across all 91 tribunals. Returns a count and list of every public process the debtor appears in. This is information no other source provides:
-
-- "Debtor has 3 cases in TJSP, 47 in TJRJ, 12 in TRT-2" → recoverability collapses
-- "Debtor has 1 case nationally" → significantly more interesting
-- "Most of debtor's cases are tributárias and they're losing" → useful procedural signal
-
-This is also a fundamental input for Layer 4's connection graph (which entities co-occur with our debtor across tribunals?).
-
-### 6.3 Caveats
-
-- **Name search is fuzzy by nature** — common names produce false positives. The Layer 3 module needs to be honest about confidence and surface candidate matches for human disambiguation when needed.
-- **TPU codes are per-tribunal.** Any movement-text analysis (e.g., "are any of these national cases at penhora stage?") needs per-tribunal code mappings, not a national table. Adds complexity to any aggregate analysis.
-- **Latency means our snapshot is always stale.** Fine for Poursuite's "find quiet cases" use case (a case DataJud hasn't seen in 6 months is exactly the profile we want), but the limitation should be explicit in any Layer 3 output.
-
-### 6.4 What's needed
-
-Wrapping the existing probe code into a production module. The probe already handles authentication, query formation, response parsing, and TPU code resolution. The production version needs:
-
-- Persistent storage of DataJud responses (snapshot per process per fetch date)
-- A name-search interface separate from the by-number interface
-- Confidence scoring on name-search hits
-- Integration with Layer 2 output (debtor names flow in, national counts flow back)
-
-This is mostly plumbing, not new capability.
+This is its own ~1-2 week workstream and ships only after Phase 2's data is solid.
 
 ---
 
-## 7. Layer 4 — Connection graph (deferred, scope clarified)
+## 8. Layer 3 — DataJud enrichment (unchanged scope)
 
-### 7.1 What Layer 4 is for
+After Phase 2 and Phase 3, Layer 3 wraps the existing DataJud probe code into a production module. The single use case that matters: cross-tribunal debtor universe — "how many executions does this debtor have nationally?"
 
-The lawyer-grade investigation tooling. Given a debtor that has passed Layer 2's filter and warrants real attention, surface every connection we can find in public data:
+The probe already handles authentication, query formation, response parsing, TPU resolution. Production needs persistent storage of DataJud responses, a name-search interface, confidence scoring on name-search hits, and integration with the snapshot store.
 
-- Companies the debtor is a sócio of (current)
-- Sócios who appear in those companies alongside the debtor
-- Addresses overlapping across multiple CNPJs
-- Cross-creditor patterns (same lawyer in many cases on opposing sides)
-
-The valuable cases your brother described — debtor's brother-in-law owns three companies at the same address — live here.
-
-### 7.2 What changed from v1
-
-**Receita CNPJ is demoted in urgency.** Two reasons:
-
-1. **SNIPER coverage of in-process patrimony.** Brazilian courts already query the consolidated debtor patrimony system (SNIPER, BACEN-JUD, SISBAJUD, RENAJUD, etc.) on the judge's behalf. The results appear in the movimentações timeline. So for assets already known to the system, we get them via Layer 2's movimentações extraction — not via Receita.
-
-2. **Receita's no-historical-sócios limitation is fundamental.** The bulk dump shows only current partnerships. The "exited the company three months before bankruptcy" pattern — exactly what investigation cares about — is invisible. Mitigations exist (JUCESP fichas, our own monthly snapshots going forward) but the limitation is real and limits how much value Receita alone delivers.
-
-So Receita stays in the plan, but as a Layer 4 input rather than a near-term ingestion priority. We ship it when we have promoted cases that warrant deep investigation — not before.
-
-### 7.3 The CNPJ alphanumeric event (July 2026)
-
-Still on the critical path. Receita Federal moves CNPJ format to alphanumeric in July 2026. Anything we build that touches CNPJ between now and then must accept letters in positions 1-12. Any database column typed numeric must become text. This applies whenever we touch CNPJ, regardless of layer.
-
-### 7.4 Open questions
-
-Same as v1 — identity resolution is still the hard problem. Address normalization. Storage strategy (SQLite scales further than people think; defer real-graph-database decision until measured).
+Mostly plumbing, not new capability. Estimate: 1-2 weeks once we get there.
 
 ---
 
-## 8. The LLM tier (capability, not a layer)
+## 9. Layer 4 — Connection graph (deferred)
 
-Eventually we want LLM analysis on cases that pass Layer 2 — reading despachos, weighing ambiguous signals, producing written justifications. This is real value, but it's a polish on a working pipeline, not a layer of the pipeline itself.
+For cases promoted from Layer 2/3 search and warranting deep investigation. Receita CNPJ + cross-source linking. Same scope as v2: demoted in urgency because SNIPER coverage handles in-process patrimony and Receita's no-historical-sócios limitation is fundamental.
 
-**Preconditions for building this:**
-1. Layer 2 movimentações extracted in production
-2. Layer 3 wired (cross-tribunal context as LLM input)
-3. **Ground-truth labels** — your brother's triage decisions documented case-by-case, ideally retrospectively-labeled with reasoning. Without these, we can't evaluate whether the LLM agrees with him, which means we can't iterate.
+Ships when promoted cases warrant it. No immediate work.
 
-**The cost regime decision (Opus everywhere / cheap-then-expensive / self-hosted) is parked.** We don't have token measurements yet — those depend on what movimentações look like in production extraction. Decide when we have real measurements.
-
-**The skill files idea remains right.** Each MD file codifies one decision (`prescricao-intercorrente.md`, `penhora-evaluation.md`, etc.). Versioned in git. Analysis cache keyed on skill SHA + model version + scrape snapshot hash. Disagreements between LLM output and your brother's judgment update the relevant skill file. **This is the training loop.**
-
-Nothing about this changes from v1. It's just genuinely later than v1 implied.
+CNPJ alphanumeric event in July 2026 still applies — any code touching CNPJ must be alphanumeric-ready.
 
 ---
 
-## 9. Methodology — how we work
+## 10. The LLM tier (still a capability, not a layer)
 
-This section is new. The probe and inventory work exposed patterns worth codifying.
+Same disposition as v2. Builds on Layer 2 data + ground-truth labels + skill files. Cost regime decision parked until we have token measurements from real movimentações data.
 
-**Verify before building.** Secondary sources lie (the TPU mappings disaster cost us a working assumption). Whenever a design rests on a fact about external data, run a probe first. The `poursuite/probes/` infrastructure exists for this.
+The search-engine framing reduces the LLM tier's importance somewhat. A good query interface means the lawyer can extract a lot of value without ever invoking an LLM. The LLM becomes a polish for cases where prose interpretation (reading a despacho) adds value beyond what queries can find.
 
-**Don't pre-judge what's useful during inventory.** The inventory pass discovered `Histórico de classes` — a high-value section we wouldn't have asked for. Whenever we're cataloging an external system, record everything; filter later.
-
-**Inventory before extending.** Before adding fields to a scraper, look at what the page actually exposes (not what docs claim). Apply this consistently going forward.
-
-**Reproducibility costs nothing upfront and a lot to retrofit.** Hash inputs. Version skill files in git. Cache by content hash. Keep cache keys aware of every input version. Start now even if it feels overkill.
-
-**Lawyer in the loop is structural, not optional.** No layer auto-decides. Even "auto-discard" buckets should be auditable — your brother can ask "show me everything you discarded and why" and get a complete answer.
-
-**Documents drift; code is authoritative.** When ARCHITECTURE.md or PLAN.md contradicts code, fix the docs. When PLAN.md and your brother contradict, fix PLAN.md.
+Not on the critical path. Maybe never built. That's fine.
 
 ---
 
-## 10. Sequencing — what ships when
+## 11. Methodology — how we work (unchanged from v2)
 
-Rougher than v1 by design. The probe + inventory cycle taught us that detailed multi-month sequencing predicts poorly. So: just the next few moves, each genuinely shippable.
+- **Verify before building.** Secondary sources lie. Probes verify.
+- **Don't pre-judge what's useful during inventory.** Record everything; filter later.
+- **Inventory before extending.** Look at the page, not the docs.
+- **Reproducibility costs nothing upfront and a lot to retrofit.** Hash inputs, version everything, cache by content.
+- **Lawyer in the loop is structural, not optional.** No layer auto-decides.
+- **Documents drift; code is authoritative.** Fix the docs when they're wrong.
 
-### Now (next workstream)
+The probe + inventory pattern proved itself again in Phase 1. Keep applying.
 
-**Expand the eSAJ scraper.** Add the 8 verified header fields, the foro/origem lookup-table derivations, and the Movimentações timeline extraction. Persist to the snapshot store. This is the foundation of the pre-filter.
+---
+
+## 12. Sequencing
+
+### Now
+**Phase 2 — Movimentações + linked structures + snapshot store.** Extract movimentações timeline, enumerate apensos/incidentes, capture petição metadata + cdDocumento IDs, build snapshot SQLite. Wire as queryable API endpoints. 2-3 weeks.
 
 ### Next
+**Query builder UI.** The interface change the search-engine framing implies. Multi-week frontend build. Defines the lawyer's primary tool.
 
-**Build the pre-filter rule engine.** Three or four rules to start — creditor classifier, debtor process count, value tier, age-based prescrição flag. Output ranked buckets. Wire into API + CLI. Iterate with your brother on rule tuning.
-
-### Soon after
-
-**Layer 3 — DataJud production module.** Cross-tribunal debtor universe. Adds one strong signal to the pre-filter.
+### After that
+**Phase 3 — Deep search.** Per-case PDF download, text extraction, eviction-managed storage. 1-2 weeks.
 
 ### Later
+**Layer 3 — DataJud production module.** Cross-tribunal debtor universe wired into the search substrate. 1-2 weeks.
 
-**Layer 4 — Receita ingestion + connection graph.** For cases that pass the pre-filter. Drives the lawyer-grade investigation tools.
+### Eventually
+**Layer 4 — Receita / connection graph.** Investigation-tier tool for cases that earn deep attention.
 
-**LLM tier.** Once we have movimentações in production + ground-truth labels.
-
-Total time to "pre-filter shipping value": probably 4-8 weeks of focused work. Total time to "connection graph + LLM as polish": months — but the system delivers value at every step, not just at the end.
-
----
-
-## 11. The standing open questions
-
-1. **Ground truth.** Your brother has triaged many cases without documented reasoning. The LLM tier can't be evaluated without labels. Worth deciding when/how to capture them — retrospective labeling on a sample, or going-forward documentation, or both.
-2. **Throughput.** Still uncertain. Shapes cost-regime decisions for the eventual LLM tier.
-3. **Storage backup.** Maintenance pipeline outputs are stored on D:; if D: dies, the 677 GB DJE corpus is rebuildable but slow. Snapshots and (eventual) graph data accumulate over time and would be lost. Worth a real backup plan before Layer 4 ships.
-4. **Multi-tenant.** Currently single-user (one API key). Not urgent.
+**LLM tier.** If/when ground truth and use case warrant it.
 
 ---
 
-## 12. Document maintenance
+## 13. Standing open questions
+
+1. **Ground truth.** Still uncaptured. Less critical now that the system is framed as a search engine the lawyer drives (his queries are the ground truth), but matters if we ever build the LLM tier.
+2. **Throughput.** Still uncertain. Less critical too — query-based systems scale differently than rule-based ones.
+3. **Storage backup.** Maintenance pipeline outputs are on D:; snapshots will be on D: too. If D: dies, the DJE corpus is rebuildable but snapshots and (eventual) deep-search data are not. Worth a real backup plan before Phase 3 ships.
+4. **Multi-tenant.** Currently single-user. Not urgent.
+5. **Query interface design.** How expressive does it need to be? Visual builder vs. text query language vs. both? Worth thinking through before the multi-week UI build starts.
+
+---
+
+## 14. Document maintenance
 
 This document updates whenever:
-- A workstream completes (mark as shipped; capture what we learned)
-- An open question gets answered (move it to a decisions section, or just delete if it resolved cleanly)
-- A new constraint or opportunity surfaces (add it; revise sequencing if needed)
-- A probe disproves an assumption baked into the plan (revise the assumption — this is the most important update trigger)
+- A workstream completes (e.g., Phase 1 → §5 update in this revision)
+- An open question gets answered
+- A new constraint or opportunity surfaces
+- A probe disproves an assumption baked into the plan
+- The strategic framing shifts (search-engine reframe in this revision)
 
-When this document and `ARCHITECTURE.md` disagree, the code is authoritative; the docs follow.
+When this document and `ARCHITECTURE.md` disagree, code is authoritative.
 
-When this document and your brother's expertise disagree, your brother is authoritative; the docs follow.
+When this document and your brother's expertise disagree, your brother is authoritative.

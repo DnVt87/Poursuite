@@ -78,9 +78,26 @@ Replace `<tunnel-name>` with whatever your tunnel is registered as. You can list
 cloudflared tunnel --url http://localhost:8000
 ```
 
+### Production domain (poursuite.com.br)
+
+DNS-only step — no new infrastructure. The existing Cloudflare Tunnel
+terminates TLS, hides the host IP, and is already working.
+
+1. In the Cloudflare DNS dashboard for `poursuite.com.br`, add a CNAME at
+   `@` (or `app`) pointing to the existing tunnel hostname (the
+   `<id>.cfargotunnel.com` value from `cloudflared tunnel list`).
+2. (Optional) Add a Cloudflare Access policy on the route for a second
+   auth layer beyond `X-API-Key`.
+3. Hit `https://poursuite.com.br` — should reach the same SPA as
+   `http://localhost:8000`.
+
+If the tunnel hostname changes (e.g. tunnel recreated), update the CNAME.
+
 ### Use it
 
 Open the tunnel hostname (or `http://localhost:8000` locally). Paste your `POURSUITE_API_KEY` into the API Key field in the page header — it persists in `sessionStorage` until the tab closes.
+
+The legacy parameter-form SPA stays available at `/legacy` for the transitional period; the new query-builder UI is served at `/`.
 
 If a search times out, the response carries `X-Truncated: true` and the SPA shows a yellow warning bar — narrow the query (date range or stricter keywords).
 

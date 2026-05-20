@@ -17,10 +17,18 @@ from fastapi import FastAPI
 
 from poursuite.db.connection import DatabaseManager
 from poursuite.db.esaj_snapshots import SnapshotStore
+from poursuite.db.process_groups import ProcessGroupStore
 from poursuite.db.search import SearchEngine
+from poursuite.api.routes import aggregates as aggregates_router
+from poursuite.api.routes import esaj_health as esaj_health_router
+from poursuite.api.routes import explain_zero as explain_zero_router
 from poursuite.api.routes import extract as extract_router
+from poursuite.api.routes import flags as flags_router
 from poursuite.api.routes import frontend as frontend_router
+from poursuite.api.routes import groups as groups_router
+from poursuite.api.routes import saved_queries as saved_queries_router
 from poursuite.api.routes import search as search_router
+from poursuite.api.routes import snapshot_status as snapshot_status_router
 from poursuite.api.routes import snapshots as snapshots_router
 
 
@@ -30,6 +38,7 @@ async def lifespan(app: FastAPI):
     app.state.db_manager = DatabaseManager()
     app.state.search_engine = SearchEngine(app.state.db_manager)
     app.state.snapshot_store = SnapshotStore()
+    app.state.process_groups = ProcessGroupStore()
     yield
     # Shutdown: close all open SQLite connections cleanly
     app.state.db_manager.close_connections()
@@ -51,3 +60,11 @@ app.include_router(frontend_router.router)
 app.include_router(search_router.router)
 app.include_router(extract_router.router)
 app.include_router(snapshots_router.router)
+# UI Phase 2.5 — six new endpoint groups backing the query-builder UI.
+app.include_router(groups_router.router)
+app.include_router(flags_router.router)
+app.include_router(snapshot_status_router.router)
+app.include_router(aggregates_router.router)
+app.include_router(explain_zero_router.router)
+app.include_router(saved_queries_router.router)
+app.include_router(esaj_health_router.router)

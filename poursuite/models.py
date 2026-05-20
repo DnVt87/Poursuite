@@ -58,6 +58,16 @@ class ProcessData:
     foro_code: Optional[str] = None
     tribunal_code: Optional[str] = None
     distribution_year: Optional[str] = None
+    # ── UI Phase 2.5 additions: normalized / promoted derived fields ──
+    # foro_name is the human-readable origem-table lookup (already computed
+    # by cnj_origem.derive_from_cnj; now stored instead of discarded).
+    foro_name: Optional[str] = None
+    # ISO 8601 (YYYY-MM-DD) form of last_movement (raw eSAJ is DD/MM/YYYY).
+    # Populated by utils.parse_brazilian_date_to_iso on the raw last_movement.
+    last_movement_iso: Optional[str] = None
+    # value parsed to integer centavos (BRL × 100). Populated by
+    # utils.parse_brl_to_centavos on the raw value string. None if unparseable.
+    value_centavos: Optional[int] = None
     # ── Legacy trailing field ──
     error: Optional[str] = None
 

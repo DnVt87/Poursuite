@@ -27,13 +27,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from poursuite.config import DB_DIR
+from poursuite.config import SNAPSHOT_DIR
 from poursuite.models import ProcessData
 from poursuite.utils import setup_logging
 
 SCHEMA_PATH = Path(__file__).parent / "esaj_schema.sql"
-DEFAULT_DB_PATH: Path = DB_DIR / "esaj_snapshots.db"
-CURRENT_SCHEMA_VERSION = 2
+DEFAULT_DB_PATH: Path = SNAPSHOT_DIR / "esaj_snapshots.db"
+CURRENT_SCHEMA_VERSION = 4
 
 # Field names from ProcessData that map 1:1 to dedicated columns on
 # process_snapshot. Excludes `number` (becomes process_number) and
@@ -226,6 +226,71 @@ class SnapshotStore:
             # document ID (from <a class="linkMovVincProc" href="...?cdDocumento=...">)
             # so Phase 3 deep-search can fetch the PDFs directly.
             cur.execute("ALTER TABLE movimento ADD COLUMN cd_documento TEXT")
+            return
+        if version == 3:
+            # UI Phase 2.5: additive — new tables only. Safe to re-run.
+            # process_flags: single-state ★ per process_number. Global namespace
+            # per the brief's identity model — no author column.
+            # If multi-state becomes a real need, the additive path is to add
+            # a label TEXT column with default 'starred'; v1 queries become
+            # WHERE label = 'starred'.
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS process_flags (
+                    process_number TEXT PRIMARY KEY,
+                    flagged_at     TEXT NOT NULL
+                )
+                """
+            )
+            # saved_queries: shared library backing Workflow 5.
+            # query_body is the JSON body POST /api/query accepts, verbatim
+            # (so re-running a saved query is just sending its query_body back).
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS saved_queries (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name            TEXT NOT NULL,
+                    description     TEXT,
+                    query_body      TEXT NOT NULL,
+                    created_at      TEXT NOT NULL,
+                    last_run_at     TEXT,
+                    last_run_count  INTEGER
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_saved_queries_last_run_at "
+                "ON saved_queries(last_run_at DESC) WHERE last_run_at IS NOT NULL"
+            )
+            return
+        if version == 4:
+            # Normalized columns on process_snapshot for aggregate-friendly
+            # ordering and range queries. The raw eSAJ fields (last_movement
+            # DD/MM/YYYY, value 'R$ N.NNN,NN') stay populated; these columns
+            # are derivative and indexed.
+            #
+            # SQLite ALTER TABLE ADD COLUMN is idempotent only via a guard;
+            # the table_info pragma check below makes re-runs no-op.
+            cur.execute("PRAGMA table_info(process_snapshot)")
+            existing_cols = {row[1] for row in cur.fetchall()}
+            if "foro_name" not in existing_cols:
+                cur.execute("ALTER TABLE process_snapshot ADD COLUMN foro_name TEXT")
+            if "last_movement_iso" not in existing_cols:
+                cur.execute("ALTER TABLE process_snapshot ADD COLUMN last_movement_iso TEXT")
+            if "value_centavos" not in existing_cols:
+                cur.execute("ALTER TABLE process_snapshot ADD COLUMN value_centavos INTEGER")
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_process_snapshot_foro_name "
+                "ON process_snapshot(foro_name) WHERE foro_name IS NOT NULL"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_process_snapshot_last_movement_iso "
+                "ON process_snapshot(last_movement_iso) WHERE last_movement_iso IS NOT NULL"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_process_snapshot_value_centavos "
+                "ON process_snapshot(value_centavos) WHERE value_centavos IS NOT NULL"
+            )
             return
         raise RuntimeError(f"Unknown migration version: {version}")
 
@@ -563,6 +628,187 @@ class SnapshotStore:
             "count_only": built.count_only,
             "results": results,
         }
+
+    # ─────────────────────────────────────────────────────────────────
+    # Flags (UI Phase 2.5)
+    # ─────────────────────────────────────────────────────────────────
+
+    def list_flagged(self) -> List[str]:
+        cur = self._conn.cursor()
+        cur.execute("SELECT process_number FROM process_flags ORDER BY flagged_at DESC")
+        return [r[0] for r in cur.fetchall()]
+
+    def flag(self, process_number: str) -> Dict[str, Any]:
+        """Mark a process as flagged. Idempotent — re-flagging keeps the
+        original flagged_at (per INSERT OR IGNORE)."""
+        ts = _utc_now_iso()
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "INSERT OR IGNORE INTO process_flags (process_number, flagged_at) VALUES (?, ?)",
+                (process_number, ts),
+            )
+            self._conn.commit()
+            cur.execute(
+                "SELECT flagged_at FROM process_flags WHERE process_number = ?",
+                (process_number,),
+            )
+            row = cur.fetchone()
+        return {"process_number": process_number, "flagged_at": row["flagged_at"] if row else ts}
+
+    def unflag(self, process_number: str) -> Dict[str, Any]:
+        """Remove a flag. Idempotent — returns deleted=False if the row was absent."""
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "DELETE FROM process_flags WHERE process_number = ?",
+                (process_number,),
+            )
+            deleted = cur.rowcount > 0
+            self._conn.commit()
+        return {"process_number": process_number, "deleted": deleted}
+
+    # ─────────────────────────────────────────────────────────────────
+    # Saved queries (UI Phase 2.5)
+    # ─────────────────────────────────────────────────────────────────
+
+    def list_saved_queries(self) -> List[Dict[str, Any]]:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT id, name, description, created_at, last_run_at, last_run_count "
+            "FROM saved_queries ORDER BY COALESCE(last_run_at, created_at) DESC"
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_saved_query(self, qid: int) -> Optional[Dict[str, Any]]:
+        cur = self._conn.cursor()
+        cur.execute("SELECT * FROM saved_queries WHERE id = ?", (qid,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def create_saved_query(
+        self, name: str, query_body: str, description: Optional[str] = None
+    ) -> Dict[str, Any]:
+        created_at = _utc_now_iso()
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "INSERT INTO saved_queries (name, description, query_body, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (name, description, query_body, created_at),
+            )
+            qid = cur.lastrowid
+            self._conn.commit()
+        return {"id": qid, "created_at": created_at}
+
+    def update_saved_query(
+        self,
+        qid: int,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        query_body: Optional[str] = None,
+    ) -> bool:
+        """Partial update. Returns True if the row existed and was updated."""
+        sets: List[str] = []
+        params: List[Any] = []
+        if name is not None:
+            sets.append("name = ?")
+            params.append(name)
+        if description is not None:
+            sets.append("description = ?")
+            params.append(description)
+        if query_body is not None:
+            sets.append("query_body = ?")
+            params.append(query_body)
+        if not sets:
+            return self.get_saved_query(qid) is not None
+        params.append(qid)
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(f"UPDATE saved_queries SET {', '.join(sets)} WHERE id = ?", params)
+            updated = cur.rowcount > 0
+            self._conn.commit()
+        return updated
+
+    def delete_saved_query(self, qid: int) -> bool:
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("DELETE FROM saved_queries WHERE id = ?", (qid,))
+            deleted = cur.rowcount > 0
+            self._conn.commit()
+        return deleted
+
+    def touch_saved_query(self, qid: int, result_count: int) -> bool:
+        """Record a re-run: update last_run_at and last_run_count."""
+        ts = _utc_now_iso()
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "UPDATE saved_queries SET last_run_at = ?, last_run_count = ? WHERE id = ?",
+                (ts, result_count, qid),
+            )
+            updated = cur.rowcount > 0
+            self._conn.commit()
+        return updated
+
+    # ─────────────────────────────────────────────────────────────────
+    # Snapshot status (UI Phase 2.5)
+    # ─────────────────────────────────────────────────────────────────
+
+    def snapshot_status(
+        self, process_numbers: List[str], max_age_days: Optional[int] = 7
+    ) -> List[Dict[str, Any]]:
+        """For each process_number, classify as 'fresh' / 'stale' / 'missing'.
+
+        Lookup is one chunked IN (...) per 1000 numbers. max_age_days=None
+        means "no age cutoff": every existing snapshot is fresh, missing ones
+        still missing.
+        """
+        from datetime import timedelta
+
+        if not process_numbers:
+            return []
+        now = datetime.now(timezone.utc)
+        latest: Dict[str, str] = {}
+        chunk = 1000
+        cur = self._conn.cursor()
+        for i in range(0, len(process_numbers), chunk):
+            sub = process_numbers[i : i + chunk]
+            placeholders = ",".join("?" * len(sub))
+            cur.execute(
+                f"SELECT process_number, MAX(snapshot_ts) AS ts "
+                f"FROM process_snapshot WHERE process_number IN ({placeholders}) "
+                f"GROUP BY process_number",
+                sub,
+            )
+            for row in cur.fetchall():
+                latest[row["process_number"]] = row["ts"]
+
+        results: List[Dict[str, Any]] = []
+        for pn in process_numbers:
+            ts = latest.get(pn)
+            if ts is None:
+                results.append({
+                    "process_number": pn, "status": "missing",
+                    "snapshot_ts": None, "age_days": None,
+                })
+                continue
+            try:
+                ts_dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%f+00:00").replace(
+                    tzinfo=timezone.utc
+                )
+                age_days = (now - ts_dt).days
+            except ValueError:
+                age_days = None
+            if max_age_days is None or (age_days is not None and age_days <= max_age_days):
+                status = "fresh"
+            else:
+                status = "stale"
+            results.append({
+                "process_number": pn, "status": status,
+                "snapshot_ts": ts, "age_days": age_days,
+            })
+        return results
 
     # ─────────────────────────────────────────────────────────────────
     # Lifecycle

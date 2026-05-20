@@ -30,6 +30,9 @@ env/
 # Claude internal
 .claude/
 
+# Diagnostic-script dumps (e.g. debug_one_scrape.py writes _last_esaj_page.html)
+scripts/_last_*.html
+
 # OS
 .DS_Store
 Thumbs.db

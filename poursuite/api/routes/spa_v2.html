@@ -1,0 +1,2338 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Poursuite</title>
+<style>
+  /* ────────────────────────────────────────────────────────────────
+     Poursuite query-builder SPA. Vanilla HTML/CSS/JS. No framework.
+     UI Phase 2.5. PT-BR throughout. Desktop primary; tablet works.
+     ──────────────────────────────────────────────────────────────── */
+  :root {
+    --bg:        #0d0f1a;
+    --panel:    #13162a;
+    --panel2:   #1a1d35;
+    --border:   #252947;
+    --border2:  #2e3255;
+    --text:     #dde1f0;
+    --muted:    #7b8499;
+    --dim:      #5a607a;
+    --dim2:     #3d4260;
+    --accent:   #6b7fff;
+    --accent2:  #4a58e8;
+    --good:     #3aa860;
+    --warn:     #d68a2a;
+    --bad:      #c4453a;
+    --mono:     "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text);
+    font-size: 14px; line-height: 1.5;
+  }
+  a { color: var(--accent); text-decoration: none; cursor: pointer; }
+  a:hover { text-decoration: underline; }
+  code, .mono { font-family: var(--mono); font-size: 0.88em; }
+  ::selection { background: var(--accent2); color: #fff; }
+
+  /* ── App chrome ── */
+  .app { display: grid; grid-template-columns: 230px 1fr; min-height: 100vh; }
+  .sidebar {
+    background: var(--panel); border-right: 1px solid var(--border);
+    padding: 16px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  .sidebar .brand {
+    padding: 0 18px 12px; font-weight: 700; color: var(--accent);
+    font-size: 1.05rem; letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--border); margin-bottom: 10px;
+  }
+  .sidebar .brand small {
+    display: block; color: var(--dim); font-weight: 400;
+    font-size: 0.7rem; letter-spacing: 0; margin-top: 2px;
+  }
+  .sidebar nav a {
+    display: block; padding: 7px 18px 7px 36px;
+    color: var(--text); font-size: 0.86rem;
+    border-left: 3px solid transparent; position: relative;
+  }
+  .sidebar nav a::before {
+    content: attr(data-num); position: absolute; left: 14px;
+    color: var(--dim); font-variant-numeric: tabular-nums;
+  }
+  .sidebar nav a:hover { background: var(--panel2); text-decoration: none; }
+  .sidebar nav a.active { background: var(--panel2); border-left-color: var(--accent); color: #fff; }
+  .sidebar .footer {
+    margin-top: 18px; padding: 10px 18px; border-top: 1px solid var(--border);
+    font-size: 0.74rem; color: var(--dim);
+  }
+  .main { padding: 0; min-width: 0; }
+  .topbar {
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 10px 24px; display: flex; align-items: center; gap: 14px;
+    position: sticky; top: 0; z-index: 5;
+  }
+  .topbar .key-pill {
+    margin-left: auto; display: flex; align-items: center; gap: 8px;
+    font-size: 0.78rem; color: var(--muted);
+  }
+  .topbar .key-pill input {
+    width: 200px; background: var(--panel2); border: 1px solid var(--border2);
+    border-radius: 6px; padding: 5px 10px; color: var(--text);
+    font-size: 0.8rem; font-family: var(--mono);
+  }
+  .topbar .key-pill input:focus { outline: none; border-color: var(--accent); }
+  .crumbs { font-size: 0.84rem; color: var(--muted); }
+  .crumbs a { color: var(--muted); }
+  .crumbs .sep { color: var(--dim2); margin: 0 6px; }
+  .crumbs strong { color: var(--text); font-weight: 600; }
+
+  .screen {
+    padding: 22px 28px 60px;
+    max-width: 1400px; margin: 0 auto;
+  }
+  .screen-header {
+    display: flex; align-items: baseline; gap: 14px;
+    margin-bottom: 18px; flex-wrap: wrap;
+  }
+  .screen-header h1 { font-size: 1.2rem; font-weight: 700; }
+  .screen-header .sub { color: var(--muted); font-size: 0.86rem; }
+  .screen-header .right { margin-left: auto; display: flex; gap: 8px; }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 18px 20px; margin-bottom: 16px;
+  }
+  .card h3 {
+    font-size: 0.74rem; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .row.tight { gap: 6px; }
+  .stack { display: flex; flex-direction: column; gap: 8px; }
+  @media (max-width: 900px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--accent2); background: var(--accent2); color: #fff;
+    padding: 7px 14px; border-radius: 6px; font-size: 0.85rem; font-weight: 600;
+    cursor: pointer; font-family: inherit; transition: background .15s;
+    user-select: none;
+  }
+  .btn:hover:not(:disabled) { background: var(--accent); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn.ghost { background: var(--panel); color: var(--text); border-color: var(--border2); }
+  .btn.ghost:hover:not(:disabled) { background: var(--panel2); }
+  .btn.warn { background: var(--warn); border-color: var(--warn); color: #1a1208; }
+  .btn.warn:hover:not(:disabled) { background: #f0a542; }
+  .btn.danger { background: var(--bad); border-color: var(--bad); }
+  .btn.danger:hover:not(:disabled) { background: #d96055; }
+  .btn.small { padding: 4px 10px; font-size: 0.78rem; }
+  .btn.icon { padding: 5px 8px; }
+
+  /* ── Forms ── */
+  label.field {
+    display: block; font-size: 0.76rem; font-weight: 600; color: var(--muted);
+    margin-bottom: 4px;
+  }
+  label.field .hint { color: var(--dim); font-weight: 400; margin-left: 6px; }
+  input[type=text], input[type=password], input[type=date], input[type=number],
+  select, textarea {
+    width: 100%; padding: 7px 10px; background: var(--panel2);
+    border: 1px solid var(--border2); border-radius: 6px;
+    color: var(--text); font-size: 0.86rem; font-family: inherit;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none; border-color: var(--accent); background: var(--bg);
+  }
+  textarea { resize: vertical; min-height: 100px; font-family: var(--mono); font-size: 0.8rem; line-height: 1.5; }
+  .checkbox { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .checkbox input { width: 14px; height: 14px; accent-color: var(--accent2); }
+
+  /* ── Pills / badges ── */
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 11px;
+    background: var(--panel2); color: var(--muted); font-size: 0.74rem;
+    border: 1px solid var(--border);
+  }
+  .pill.good { background: #143d27; color: #6ddc97; border-color: #25613f; }
+  .pill.warn { background: #3a2810; color: #f0c060; border-color: #6a4818; }
+  .pill.bad  { background: #3a1414; color: #f08080; border-color: #6a2828; }
+  .pill.info { background: #14233a; color: #7eb8f5; border-color: #265084; }
+
+  /* ── Status banner ── */
+  .banner {
+    padding: 10px 14px; border-radius: 8px; font-size: 0.86rem;
+    margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+  }
+  .banner.info { background: #0e2340; border: 1px solid #1e4880; color: #7eb8f5; }
+  .banner.warn { background: #2a2010; border: 1px solid #6e4a10; color: #f0c060; }
+  .banner.bad  { background: #2a1010; border: 1px solid #6e2020; color: #f08080; }
+  .banner.good { background: #0d2a1e; border: 1px solid #1e6040; color: #60d090; }
+  .hidden { display: none !important; }
+
+  /* ── Table ── */
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td {
+    padding: 8px 10px; text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    background: var(--panel2); font-weight: 600;
+    color: var(--muted); font-size: 0.76rem;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    position: sticky; top: 0; cursor: pointer; user-select: none;
+  }
+  th:hover { color: var(--text); }
+  th.sortable::after { content: ' ⇅'; color: var(--dim); font-size: 0.7em; }
+  th.sort-asc::after  { content: ' ▲'; color: var(--accent); }
+  th.sort-desc::after { content: ' ▼'; color: var(--accent); }
+  tr:hover td { background: var(--panel2); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.mono { font-family: var(--mono); color: var(--accent); font-size: 0.82rem; }
+  .table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: auto; max-height: 70vh; }
+
+  /* ── Skeleton loader ── */
+  .skeleton {
+    background: linear-gradient(90deg, var(--panel2) 0%, var(--border) 50%, var(--panel2) 100%);
+    background-size: 200% 100%;
+    animation: skel 1.4s ease-in-out infinite;
+    border-radius: 4px;
+  }
+  @keyframes skel { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+  .skel-row { height: 16px; margin-bottom: 8px; }
+
+  /* ── Pagination ── */
+  .pagination { display: flex; gap: 4px; align-items: center; justify-content: center; padding: 14px 0; }
+  .pagination button {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 11px; color: var(--muted); cursor: pointer; font-size: 0.82rem;
+  }
+  .pagination button:hover:not(:disabled) { background: var(--panel2); color: var(--text); }
+  .pagination button.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  .pagination button:disabled { opacity: 0.3; cursor: not-allowed; }
+  .pagination .info { color: var(--dim); font-size: 0.82rem; padding: 0 6px; }
+
+  /* ── Flag / star ── */
+  .flag { background: none; border: none; cursor: pointer; font-size: 1.05em; padding: 0 4px; color: var(--dim2); }
+  .flag.on { color: var(--warn); }
+  .flag:hover { color: var(--warn); }
+
+  /* ── Construtor (visual builder) ── */
+  .builder {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .clause {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; margin-bottom: 8px;
+  }
+  .clause-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .clause-row select, .clause-row input { width: auto; min-width: 120px; flex: 1; }
+  .clause-row .field-select { min-width: 180px; flex: 2; }
+  .clause-row .op-select { max-width: 140px; }
+  .clause-children {
+    margin-top: 8px; margin-left: 20px; padding-left: 12px;
+    border-left: 2px solid var(--border);
+  }
+  .clause-toolbar { margin-top: 6px; display: flex; gap: 4px; flex-wrap: wrap; }
+  .clause-header { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .clause-header .kind {
+    font-weight: 700; color: var(--accent); font-size: 0.78rem;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .clause-header .delete {
+    margin-left: auto; background: none; border: none; color: var(--dim);
+    cursor: pointer; font-size: 0.95em;
+  }
+  .clause-header .delete:hover { color: var(--bad); }
+  .clause-empty { color: var(--dim); font-style: italic; padding: 4px 0; font-size: 0.84rem; }
+
+  /* ── JSON preview ── */
+  .json-preview {
+    background: #08091a; color: #c6d0f5; border-radius: 6px;
+    padding: 10px 12px; font-family: var(--mono); font-size: 0.78rem;
+    white-space: pre; overflow: auto; max-height: 380px;
+    border: 1px solid var(--border);
+  }
+  .json-textarea {
+    width: 100%; min-height: 380px; max-height: 600px; background: #08091a;
+    color: #c6d0f5; font-family: var(--mono); font-size: 0.8rem;
+    border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px;
+  }
+  .json-error { color: var(--bad); font-size: 0.8rem; margin-top: 6px; }
+
+  /* ── Aggregates / charts (CSS bars) ── */
+  .bar-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 0.86rem; }
+  .bar-row .label { flex: 0 0 30%; color: var(--text); }
+  .bar-row .bar {
+    flex: 1; height: 18px; background: var(--panel2); border-radius: 3px; position: relative; overflow: hidden;
+  }
+  .bar-row .bar > div {
+    height: 100%; background: var(--accent2);
+    border-radius: 3px;
+  }
+  .bar-row .count { flex: 0 0 80px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar-row .pct { flex: 0 0 60px; text-align: right; color: var(--dim); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+  .bar-row:hover .bar > div { background: var(--accent); }
+  .bar-row.clickable { cursor: pointer; }
+
+  /* ── Detalhe (Screen 6) ── */
+  .timeline { border-left: 2px solid var(--border); margin-left: 8px; padding-left: 18px; }
+  .timeline-item {
+    position: relative; padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .timeline-item:last-child { border-bottom: none; }
+  .timeline-item::before {
+    content: ''; position: absolute; left: -23px; top: 16px; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--accent2); border: 2px solid var(--panel);
+  }
+  .timeline-item .date {
+    color: var(--muted); font-size: 0.76rem; font-variant-numeric: tabular-nums;
+  }
+  .timeline-item .name { font-weight: 600; color: var(--text); margin: 2px 0 4px; }
+  .timeline-item .compl { color: var(--muted); font-size: 0.84rem; white-space: pre-wrap; }
+
+  /* ── Toasts ── */
+  .toasts { position: fixed; bottom: 18px; right: 18px; z-index: 50; display: flex; flex-direction: column; gap: 6px; }
+  .toast {
+    background: var(--panel); border: 1px solid var(--border2); border-left: 3px solid var(--accent);
+    padding: 8px 12px; border-radius: 6px; font-size: 0.84rem;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.4); animation: toastIn .2s ease-out;
+    min-width: 200px;
+  }
+  .toast.bad { border-left-color: var(--bad); }
+  .toast.good { border-left-color: var(--good); }
+  @keyframes toastIn { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+  /* ── Login screen (no app chrome) ── */
+  .login-shell {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 20px; background: var(--bg);
+  }
+  .login-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 32px 36px; max-width: 420px; width: 100%;
+  }
+  .login-card h1 { color: var(--accent); font-size: 1.4rem; letter-spacing: 0.06em; margin-bottom: 4px; }
+  .login-card .sub { color: var(--muted); margin-bottom: 22px; font-size: 0.86rem; }
+  .login-card .footer-note { margin-top: 18px; color: var(--dim); font-size: 0.76rem; line-height: 1.6; }
+
+  /* ── Spinner ── */
+  .spinner {
+    display: inline-block; width: 12px; height: 12px;
+    border: 2px solid currentColor; border-top-color: transparent;
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Misc ── */
+  .empty {
+    text-align: center; padding: 40px 20px; color: var(--dim); font-size: 0.9rem;
+  }
+  .help-link { color: var(--dim); font-size: 0.78rem; cursor: pointer; }
+  .help-link:hover { color: var(--muted); }
+  .kbd {
+    display: inline-block; padding: 1px 5px; background: var(--panel2);
+    border: 1px solid var(--border2); border-radius: 3px;
+    font-family: var(--mono); font-size: 0.78em;
+  }
+</style>
+</head>
+<body>
+
+<!-- Login shell (replaces .app when no key in sessionStorage) -->
+<div id="loginShell" class="login-shell hidden">
+  <div class="login-card">
+    <h1>POURSUITE</h1>
+    <p class="sub">Construtor de consultas — TJSP / eSAJ</p>
+    <div id="loginHttpsWarn" class="banner bad hidden">
+      ⚠ Conexão sem TLS — não utilize uma chave real até a página servir-se sob HTTPS.
+    </div>
+    <label class="field" for="loginKey">Chave de acesso</label>
+    <input type="password" id="loginKey" autocomplete="off" placeholder="Cole sua API key">
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <button id="loginBtn" class="btn">Entrar</button>
+    </div>
+    <p class="footer-note">
+      A chave é guardada em <span class="kbd">sessionStorage</span> e expira ao fechar o navegador.
+      Para rotacionar a chave, o operador atualiza <span class="kbd">POURSUITE_API_KEY</span> no
+      servidor e comunica o novo valor fora-de-banda.
+    </p>
+  </div>
+</div>
+
+<!-- App shell -->
+<div id="appShell" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand">POURSUITE <small>construtor de consultas</small></div>
+    <nav id="sideNav">
+      <a data-num="1" data-route="inicio">Início</a>
+      <a data-num="2" data-route="carteiras">Carteiras</a>
+      <a data-num="3" data-route="construtor">Construtor</a>
+      <a data-num="4" data-route="salvas">Consultas salvas</a>
+      <a data-num="5" data-route="agregados">Agregados</a>
+      <a data-num="6" data-route="esquema">Esquema</a>
+      <a data-num="7" data-route="dje">Busca DJE</a>
+    </nav>
+    <div class="footer">
+      Modelo mental: workspace do escritório, compartilhado.
+      Estrelas, consultas e carteiras são globais.
+    </div>
+  </aside>
+  <div class="main">
+    <div class="topbar">
+      <div id="crumbs" class="crumbs"></div>
+      <div class="key-pill">
+        <span>API key</span>
+        <input type="password" id="apiKeyHeader" autocomplete="off">
+        <button class="btn ghost small" id="logoutBtn" title="Sair">Sair</button>
+      </div>
+    </div>
+    <main id="appMain"></main>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+'use strict';
+
+/* ════════════════════════════════════════════════════════════════════
+   CONSTANTS — schema catalog (mirrors poursuite/db/esaj_query.py
+   whitelists + UI_DESIGN_NOTES.md §3 PT-BR labels).
+   ════════════════════════════════════════════════════════════════════ */
+
+const HEADER_FIELDS = [
+  { api: 'process_number',     label: 'Processo (CNJ)',          type: 'identifier', ops: ['=','!=','in','not_in'] },
+  { api: 'snapshot_ts',        label: 'Timestamp do snapshot',   type: 'iso_ts',     ops: ['=','!=','<','<=','>','>=','is_null','is_not_null'] },
+  { api: 'initial_date',       label: 'Distribuído em',          type: 'br_date',    ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'class_type',         label: 'Classe',                  type: 'text_enum',  ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'subject',            label: 'Assunto',                 type: 'text',       ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'value',              label: 'Valor (texto)',           type: 'br_currency',ops: ['=','!=','is_null','is_not_null'] },
+  { api: 'last_movement',      label: 'Última mov. (texto)',     type: 'br_date',    ops: ['=','!=','is_null','is_not_null'] },
+  { api: 'status',             label: 'Situação',                type: 'text_enum',  ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'plaintiff',          label: 'Autor / Exequente',       type: 'text',       ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'defendant',          label: 'Réu / Executado',         type: 'text',       ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'other_processes',    label: 'Outros processos do réu', type: 'int',        ops: ['=','!=','<','<=','>','>=','is_null','is_not_null'] },
+  { api: 'foro',               label: 'Foro',                    type: 'text_enum',  ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'foro_name',          label: 'Foro (nome normalizado)', type: 'text_enum',  ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'foro_code',          label: 'Foro (cód.)',             type: 'text_enum',  ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'tribunal_code',      label: 'Tribunal (cód.)',         type: 'text_enum',  ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'distribution_year',  label: 'Ano de distribuição',     type: 'text_enum',  ops: ['=','!=','<','<=','>','>=','in','not_in'] },
+  { api: 'vara',               label: 'Vara',                    type: 'text',       ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'juiz',               label: 'Juiz(a)',                 type: 'text',       ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'controle',           label: 'Controle',                type: 'text',       ops: ['=','!=','is_null','is_not_null'] },
+  { api: 'outros_assuntos',    label: 'Outros assuntos',         type: 'text',       ops: ['=','!=','is_null','is_not_null'] },
+  { api: 'outros_numeros',     label: 'Outros números',          type: 'text',       ops: ['=','!=','is_null','is_not_null'] },
+  { api: 'local_fisico',       label: 'Local físico',            type: 'text',       ops: ['=','!=','is_null','is_not_null'] },
+  { api: 'area',               label: 'Área',                    type: 'text',       ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'last_movement_iso',  label: 'Última mov. (data ISO)',  type: 'iso_date',   ops: ['=','!=','<','<=','>','>=','is_null','is_not_null'] },
+  { api: 'value_centavos',     label: 'Valor (centavos, BRL×100)', type: 'int',     ops: ['=','!=','<','<=','>','>=','is_null','is_not_null'] },
+  { api: 'scrape_outcome',     label: 'Resultado do scrape',     type: 'text_enum',  ops: ['=','!=','in','not_in'] },
+];
+
+const MOVIMENTO_FIELDS = [
+  { api: 'ordem',              label: 'Ordem',                   type: 'int',        ops: ['=','!=','<','<=','>','>='] },
+  { api: 'data_hora',          label: 'Data/hora',               type: 'iso_ts',     ops: ['=','!=','<','<=','>','>=','is_null','is_not_null'] },
+  { api: 'codigo',             label: 'Código TPU',              type: 'int',        ops: ['=','!=','is_null','is_not_null'] },
+  { api: 'nome',               label: 'Movimentação',            type: 'text_fts',   ops: ['=','!=','in','not_in','match','is_null','is_not_null'] },
+  { api: 'complementos_text',  label: 'Complementos',            type: 'text_fts',   ops: ['=','!=','match','is_null','is_not_null'] },
+  { api: 'cd_documento',       label: 'Documento (eSAJ)',        type: 'text',       ops: ['=','!=','is_null','is_not_null'] },
+];
+
+const LINKED_FIELDS = [
+  { api: 'linked_number',      label: 'Nº vinculado',            type: 'identifier', ops: ['=','!=','in','not_in'] },
+  { api: 'relationship_type',  label: 'Tipo de relação',         type: 'text_enum',  ops: ['=','!=','in','not_in'] },
+];
+
+const PETICAO_FIELDS = [
+  { api: 'ordem',              label: 'Ordem',                   type: 'int',        ops: ['=','!=','<','<=','>','>='] },
+  { api: 'data',               label: 'Data',                    type: 'br_date',    ops: ['=','!=','is_null','is_not_null'] },
+  { api: 'tipo',               label: 'Tipo',                    type: 'text',       ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'cd_documento',       label: 'Documento (eSAJ)',        type: 'text',       ops: ['=','!=','is_null','is_not_null'] },
+];
+
+const OP_LABELS = {
+  '=':           'igual a',
+  '!=':          'diferente de',
+  '<':           'menor que',
+  '<=':          'menor ou igual',
+  '>':           'maior que',
+  '>=':          'maior ou igual',
+  'in':          'está em',
+  'not_in':      'não está em',
+  'is_null':     'é nulo',
+  'is_not_null': 'não é nulo',
+  'match':       'busca FTS5',
+};
+
+const HEADER_LABEL = Object.fromEntries(HEADER_FIELDS.map(f => [f.api, f.label]));
+
+/* ════════════════════════════════════════════════════════════════════
+   STATE
+   ════════════════════════════════════════════════════════════════════ */
+
+const state = {
+  route: { name: 'inicio', args: [] },
+  flags: new Set(),                // set of flagged process_numbers
+  groups: [],                      // [{group_id,name,created_at,count}, ...]
+  savedQueries: [],                // [{id,name,description,...}, ...]
+  // Construtor working state — separate from saved-query records.
+  builder: {
+    queryBody: { where: { and: [] } },
+    select: ['process_number','class_type','foro','foro_name','vara','juiz','value','last_movement_iso'],
+    orderBy: [{ field: 'snapshot_ts', dir: 'desc' }],
+    snapshot: 'latest',
+    flaggedOnly: false,
+    unflaggedOnly: false,
+    scopeGroup: null,              // group_id if scoped
+    mode: 'visual',                // 'visual' | 'json'
+    jsonDraft: null,               // current textarea value while editing
+    jsonError: null,
+    // Optional saved-query id; set when re-running from library.
+    savedQueryId: null,
+  },
+  // Last query result for Resultados screen.
+  results: {
+    total: 0, page: 1, pageSize: 50,
+    rows: [], fields: [], loading: false, error: null, age: null,
+  },
+  abortRun: null,                  // AbortController for the active query
+  // Aggregates screen state.
+  agg: {
+    scope: 'all',                  // 'all' | 'group:<id>' | 'current'
+    groupBy: 'class_type',
+    snapshot: 'latest',
+    flaggedOnly: false,
+    unflaggedOnly: false,
+    groupByData: null, histData: null, statsData: null,
+    loading: false,
+  },
+};
+
+/* ════════════════════════════════════════════════════════════════════
+   API CLIENT
+   ════════════════════════════════════════════════════════════════════ */
+
+function apiKey() {
+  return sessionStorage.getItem('poursuiteKey') || '';
+}
+
+async function apiFetch(url, opts = {}) {
+  const key = apiKey();
+  if (!key) throw new Error('API key não definida');
+  const headers = { 'X-API-Key': key, ...(opts.headers || {}) };
+  if (opts.body && typeof opts.body !== 'string') {
+    headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+  }
+  const resp = await fetch(url, { ...opts, headers });
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try { detail = (await resp.json()).detail || detail; } catch (_) {}
+    const err = new Error(`HTTP ${resp.status}: ${detail}`);
+    err.status = resp.status; err.detail = detail;
+    throw err;
+  }
+  if (resp.headers.get('content-type')?.includes('application/json')) {
+    return resp.json();
+  }
+  return resp;
+}
+
+const api = {
+  query:           (body, signal) => apiFetch('/api/query', { method: 'POST', body, signal }),
+  explainZero:     (body) => apiFetch('/api/query/explain_zero', { method: 'POST', body }),
+  // Groups
+  listGroups:      () => apiFetch('/api/groups'),
+  getGroup:        (id) => apiFetch(`/api/groups/${encodeURIComponent(id)}`),
+  createGroup:     (name, process_numbers) => apiFetch('/api/groups', { method: 'POST', body: { name, process_numbers } }),
+  deleteGroup:     (id) => apiFetch(`/api/groups/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // Flags
+  listFlags:       () => apiFetch('/api/flags'),
+  flag:            (pn) => apiFetch(`/api/flags/${encodeURIComponent(pn)}`, { method: 'POST' }),
+  unflag:          (pn) => apiFetch(`/api/flags/${encodeURIComponent(pn)}`, { method: 'DELETE' }),
+  // Snapshots
+  snapshotStatus:  (process_numbers, max_age_days) => apiFetch('/api/snapshot_status', { method: 'POST', body: { process_numbers, max_age_days } }),
+  listProcessSnapshots: (pn) => apiFetch(`/api/process/${encodeURIComponent(pn)}/snapshots`),
+  getMovimentos:   (pn, since) => apiFetch(`/api/process/${encodeURIComponent(pn)}/movimentos${since ? '?since=' + encodeURIComponent(since) : ''}`),
+  getLinks:        (pn) => apiFetch(`/api/process/${encodeURIComponent(pn)}/links`),
+  getPeticoes:     (pn) => apiFetch(`/api/process/${encodeURIComponent(pn)}/peticoes`),
+  // Aggregates
+  aggGroupBy:      (body) => apiFetch('/api/aggregates/group_by', { method: 'POST', body }),
+  aggHistogram:    (body) => apiFetch('/api/aggregates/histogram', { method: 'POST', body }),
+  aggStats:        (body) => apiFetch('/api/aggregates/stats', { method: 'POST', body }),
+  // Saved queries
+  listSaved:       () => apiFetch('/api/saved_queries'),
+  getSaved:        (id) => apiFetch(`/api/saved_queries/${id}`),
+  createSaved:     (body) => apiFetch('/api/saved_queries', { method: 'POST', body }),
+  updateSaved:     (id, body) => apiFetch(`/api/saved_queries/${id}`, { method: 'PUT', body }),
+  deleteSaved:     (id) => apiFetch(`/api/saved_queries/${id}`, { method: 'DELETE' }),
+  touchSaved:      (id, result_count) => apiFetch(`/api/saved_queries/${id}/touch`, { method: 'POST', body: { result_count } }),
+  // Extract (legacy reuse for scraping kickoff)
+  extractStart:    (body) => apiFetch('/extract/start', { method: 'POST', body }),
+  extractStatus:   (jobId) => apiFetch(`/extract/status/${jobId}`),
+  // eSAJ reachability pre-flight (UI Phase 2.5)
+  esajHealth:      () => apiFetch('/api/esaj_health'),
+  // DJE search (legacy)
+  searchDJE:       (params) => apiFetch(`/search?${params.toString()}`),
+};
+
+/* ════════════════════════════════════════════════════════════════════
+   UTILITIES
+   ════════════════════════════════════════════════════════════════════ */
+
+function $(sel, root = document) { return root.querySelector(sel); }
+// Form-state properties that must be assigned as DOM properties (not HTML
+// attributes) AND deferred until after children are appended. textareas read
+// their content from inner text — setAttribute('value', ...) is a no-op.
+// <select>.value only works once its <option>s exist.
+const _DEFER_PROPS = new Set(['value', 'checked', 'selected']);
+function el(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  const deferred = {};
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class') e.className = v;
+    else if (k === 'style') Object.assign(e.style, v);
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (k === 'html') e.innerHTML = v;
+    else if (_DEFER_PROPS.has(k)) deferred[k] = v;
+    else if (k in e && typeof v !== 'string') e[k] = v;
+    else e.setAttribute(k, v);
+  }
+  for (const c of children.flat()) {
+    if (c === null || c === undefined || c === false) continue;
+    e.appendChild(typeof c === 'string' || typeof c === 'number'
+      ? document.createTextNode(String(c)) : c);
+  }
+  for (const [k, v] of Object.entries(deferred)) e[k] = v;
+  return e;
+}
+function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+function formatBRL(centavosOrBRL, isAlreadyBRL = false) {
+  if (centavosOrBRL === null || centavosOrBRL === undefined) return '—';
+  const n = isAlreadyBRL ? Number(centavosOrBRL) : Number(centavosOrBRL) / 100;
+  if (!isFinite(n)) return '—';
+  return 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatISODate(iso) {
+  if (!iso) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+}
+
+function formatTS(iso) {
+  if (!iso) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):/.exec(iso);
+  return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}` : iso;
+}
+
+function toast(msg, kind = 'info') {
+  const t = $('#toasts');
+  const node = el('div', { class: 'toast ' + (kind === 'error' ? 'bad' : kind === 'success' ? 'good' : '') }, msg);
+  t.appendChild(node);
+  setTimeout(() => node.remove(), 4000);
+}
+
+function parseProcessNumbers(text) {
+  // Accept both formatted CNJ (NNNNNNN-DD.AAAA.J.TR.OOOO) and bare 20-digit
+  // forms, but canonicalize to the formatted form — that's what the scraper's
+  // PROCESS_NUMBER_PATTERN_STRICT validates against, and what process_snapshot
+  // stores as the natural process_number key. Returning digit-only would
+  // break /extract/start (rejects) and break carteira→IN-clause matching
+  // (snapshot rows are formatted).
+  const re = /\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}|\d{20}/g;
+  const raw = text.match(re) || [];
+  return [...new Set(raw.map(formatCNJ))];
+}
+
+function formatCNJ(num) {
+  // Canonical formatted form: 1234567-89.2026.8.26.0100 from either
+  // formatted input or bare 20 digits. Idempotent.
+  if (!num) return '';
+  const s = String(num).replace(/[-.]/g, '');
+  if (s.length !== 20) return num;
+  return `${s.slice(0,7)}-${s.slice(7,9)}.${s.slice(9,13)}.${s.slice(13,14)}.${s.slice(14,16)}.${s.slice(16)}`;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   ROUTER (hash-based)
+   ════════════════════════════════════════════════════════════════════ */
+
+function parseHash() {
+  const h = location.hash.replace(/^#\/?/, '');
+  const parts = h.split('/').filter(Boolean);
+  return parts.length ? { name: parts[0], args: parts.slice(1).map(decodeURIComponent) }
+                      : { name: 'inicio', args: [] };
+}
+
+function navigate(name, ...args) {
+  location.hash = '#/' + [name, ...args.map(encodeURIComponent)].join('/');
+}
+
+function onHashChange() {
+  state.route = parseHash();
+  render();
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   RENDER (main entry)
+   ════════════════════════════════════════════════════════════════════ */
+
+function render() {
+  if (!apiKey()) {
+    $('#loginShell').classList.remove('hidden');
+    $('#appShell').classList.add('hidden');
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+      $('#loginHttpsWarn').classList.remove('hidden');
+    }
+    return;
+  }
+  $('#loginShell').classList.add('hidden');
+  $('#appShell').classList.remove('hidden');
+
+  // Sync header key field
+  $('#apiKeyHeader').value = apiKey();
+
+  // Sidebar active state
+  const navMap = {
+    inicio: 'inicio', carteiras: 'carteiras', upload: 'carteiras',
+    construtor: 'construtor', resultados: 'construtor',
+    detalhe: null, salvas: 'salvas', agregados: 'agregados',
+    esquema: 'esquema', dje: 'dje',
+  };
+  const active = navMap[state.route.name] || state.route.name;
+  $('#sideNav').querySelectorAll('a').forEach(a => {
+    a.classList.toggle('active', a.dataset.route === active);
+  });
+
+  // Crumbs
+  renderCrumbs();
+
+  // Body
+  const main = $('#appMain');
+  clear(main);
+  const dispatch = {
+    inicio: renderInicio,
+    carteiras: renderCarteiras,
+    upload: renderUpload,
+    construtor: renderConstrutor,
+    resultados: renderResultados,
+    detalhe: renderDetalhe,
+    salvas: renderSalvas,
+    agregados: renderAgregados,
+    esquema: renderEsquema,
+    dje: renderDJE,
+  };
+  const fn = dispatch[state.route.name] || renderInicio;
+  fn(main, state.route.args);
+}
+
+function renderCrumbs() {
+  const c = $('#crumbs');
+  clear(c);
+  const labels = {
+    inicio: 'Início', carteiras: 'Carteiras', upload: 'Nova carteira',
+    construtor: 'Construtor', resultados: 'Resultados',
+    detalhe: 'Detalhe do processo', salvas: 'Consultas salvas',
+    agregados: 'Visões agregadas', esquema: 'Esquema',
+    dje: 'Busca DJE',
+  };
+  c.appendChild(el('a', { onclick: () => navigate('inicio') }, 'Poursuite'));
+  if (state.route.name !== 'inicio') {
+    c.appendChild(el('span', { class: 'sep' }, '/'));
+    c.appendChild(el('strong', {}, labels[state.route.name] || state.route.name));
+    if (state.route.args.length && state.route.name === 'detalhe') {
+      c.appendChild(el('span', { class: 'sep' }, '/'));
+      c.appendChild(el('span', { class: 'mono' }, formatCNJ(state.route.args[0])));
+    }
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SCREEN — Início
+   ════════════════════════════════════════════════════════════════════ */
+
+async function renderInicio(host) {
+  host.appendChild(el('div', { class: 'screen' },
+    el('div', { class: 'screen-header' },
+      el('h1', {}, 'Início'),
+      el('span', { class: 'sub' }, 'Workspace compartilhado · ' + new Date().toLocaleDateString('pt-BR')),
+    ),
+    el('div', { class: 'grid-3' },
+      el('div', { class: 'card' },
+        el('h3', {}, 'Ações rápidas'),
+        el('div', { class: 'stack' },
+          el('button', { class: 'btn', onclick: () => { resetBuilder(); navigate('construtor'); } }, '✎ Nova consulta'),
+          el('button', { class: 'btn ghost', onclick: () => navigate('upload') }, '＋ Nova carteira'),
+          el('button', { class: 'btn ghost', onclick: () => navigate('dje') }, '🔎 Buscar no DJE'),
+          el('button', { class: 'btn ghost', onclick: () => navigate('agregados') }, '📊 Agregados'),
+        ),
+      ),
+      el('div', { class: 'card', id: 'inicio-carteiras' },
+        el('h3', {}, 'Carteiras recentes'),
+        el('div', { class: 'empty' }, 'Carregando…'),
+      ),
+      el('div', { class: 'card', id: 'inicio-salvas' },
+        el('h3', {}, 'Consultas salvas (recentes)'),
+        el('div', { class: 'empty' }, 'Carregando…'),
+      ),
+    ),
+    el('div', { class: 'card' },
+      el('h3', {}, 'Sobre este workspace'),
+      el('p', { style: { color: 'var(--muted)', fontSize: '0.86rem', lineHeight: '1.6' } },
+        'Chave única compartilhada. Tudo o que você cria — carteiras, consultas salvas, ',
+        'estrelas — é visível para todos com acesso. Operações destrutivas pedem confirmação, ',
+        'mas não há limite de quem pode apagar o quê.',
+      ),
+    ),
+  ));
+  // Load carteiras + saved queries async
+  try {
+    const [g, s] = await Promise.all([api.listGroups(), api.listSaved()]);
+    state.groups = g.results || [];
+    state.savedQueries = s.results || [];
+    const cWrap = $('#inicio-carteiras');
+    const sWrap = $('#inicio-salvas');
+    clear(cWrap); cWrap.appendChild(el('h3', {}, 'Carteiras recentes'));
+    if (!state.groups.length) {
+      cWrap.appendChild(el('div', { class: 'empty' }, 'Nenhuma carteira ainda. ', el('a', { onclick: () => navigate('upload') }, 'Criar a primeira →')));
+    } else {
+      const list = el('div', { class: 'stack' });
+      state.groups.slice(0, 6).forEach(g => {
+        list.appendChild(el('a', { onclick: () => openCarteira(g.group_id) },
+          el('strong', {}, g.name),
+          el('div', { style: { color: 'var(--dim)', fontSize: '0.78rem' } },
+            `${g.count} processos · criada ${formatTS(g.created_at)}`),
+        ));
+      });
+      cWrap.appendChild(list);
+    }
+    clear(sWrap); sWrap.appendChild(el('h3', {}, 'Consultas salvas (recentes)'));
+    if (!state.savedQueries.length) {
+      sWrap.appendChild(el('div', { class: 'empty' }, 'Nenhuma consulta salva ainda.'));
+    } else {
+      const list = el('div', { class: 'stack' });
+      state.savedQueries.slice(0, 6).forEach(q => {
+        list.appendChild(el('a', { onclick: () => runSavedQuery(q.id) },
+          el('strong', {}, q.name),
+          el('div', { style: { color: 'var(--dim)', fontSize: '0.78rem' } },
+            (q.last_run_count != null ? `${q.last_run_count} resultados · ` : '') +
+            (q.last_run_at ? `executada ${formatTS(q.last_run_at)}` : 'nunca executada'),
+          ),
+        ));
+      });
+      sWrap.appendChild(list);
+    }
+  } catch (e) {
+    toast('Falha ao carregar dashboard: ' + e.message, 'error');
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SCREEN — Carteiras (list + open)
+   ════════════════════════════════════════════════════════════════════ */
+
+async function renderCarteiras(host) {
+  host.appendChild(el('div', { class: 'screen' },
+    el('div', { class: 'screen-header' },
+      el('h1', {}, 'Carteiras'),
+      el('span', { class: 'sub' }, 'Provenance de upload. Cada carteira é só um conjunto nomeado de números de processo.'),
+      el('div', { class: 'right' },
+        el('button', { class: 'btn', onclick: () => navigate('upload') }, '＋ Nova carteira'),
+      ),
+    ),
+    el('div', { class: 'card', id: 'carteira-list' },
+      el('div', { class: 'empty' }, 'Carregando…'),
+    ),
+  ));
+  try {
+    const r = await api.listGroups();
+    state.groups = r.results || [];
+    const wrap = $('#carteira-list');
+    clear(wrap);
+    if (!state.groups.length) {
+      wrap.appendChild(el('div', { class: 'empty' }, 'Nenhuma carteira ainda. ',
+        el('a', { onclick: () => navigate('upload') }, 'Criar a primeira →')));
+      return;
+    }
+    const tbl = el('table');
+    tbl.appendChild(el('thead', {}, el('tr', {},
+      el('th', {}, 'Nome'), el('th', {}, 'Criada em'),
+      el('th', { class: 'num' }, '#'), el('th', {}, ''))));
+    const tbody = el('tbody');
+    state.groups.forEach(g => {
+      tbody.appendChild(el('tr', {},
+        el('td', {}, el('a', { onclick: () => openCarteira(g.group_id) }, g.name)),
+        el('td', {}, formatTS(g.created_at)),
+        el('td', { class: 'num' }, String(g.count)),
+        el('td', {},
+          el('button', { class: 'btn ghost small', onclick: () => openCarteira(g.group_id) }, 'Compor consulta'),
+          ' ',
+          el('button', { class: 'btn ghost small danger', onclick: () => deleteCarteira(g.group_id, g.name) }, '🗑'),
+        ),
+      ));
+    });
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+  } catch (e) {
+    toast('Erro ao listar carteiras: ' + e.message, 'error');
+  }
+}
+
+async function openCarteira(gid) {
+  try {
+    const g = await api.getGroup(gid);
+    resetBuilder();
+    state.builder.scopeGroup = g;
+    // Inject IN clause into the top-level AND.
+    state.builder.queryBody.where.and.push({
+      field: 'process_number', op: 'in', value: g.process_numbers,
+    });
+    navigate('construtor');
+  } catch (e) {
+    toast('Erro ao abrir carteira: ' + e.message, 'error');
+  }
+}
+
+async function deleteCarteira(gid, name) {
+  if (!confirm(`Apagar a carteira "${name}"?\n\nIsso é compartilhado; afetará todos com acesso.`)) return;
+  try {
+    await api.deleteGroup(gid);
+    toast('Carteira apagada.', 'success');
+    render();
+  } catch (e) {
+    toast('Erro ao apagar: ' + e.message, 'error');
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SCREEN — Carregar carteira (upload + snapshot_status preview)
+   ════════════════════════════════════════════════════════════════════ */
+
+function renderUpload(host) {
+  const uploadState = { name: '', numbers: [], status: null, maxAgeDays: 7, scraping: null };
+
+  function renderInto(s) {
+    clear(s);
+    s.appendChild(el('div', { class: 'screen' },
+      el('div', { class: 'screen-header' },
+        el('h1', {}, 'Carregar carteira'),
+        el('span', { class: 'sub' }, 'Cole números de processo ou suba um CSV. Um número por linha.'),
+      ),
+      el('div', { class: 'card' },
+        el('label', { class: 'field' }, 'Nome da carteira'),
+        el('input', {
+          type: 'text', value: uploadState.name,
+          placeholder: 'Carteira Itaú · maio/2026',
+          oninput: (e) => uploadState.name = e.target.value,
+        }),
+        el('div', { style: { marginTop: '12px' } },
+          el('label', { class: 'field' }, 'Números de processo ',
+            el('span', { class: 'hint' }, 'ou CSV com coluna "numero_processo"')),
+          el('textarea', {
+            placeholder: '1234567-89.2026.8.26.0100\n2345678-90.2025.8.26.0001\n…',
+            value: uploadState.numbers.join('\n'),
+            style: { minHeight: '160px' },
+            onblur: (e) => {
+              uploadState.numbers = parseProcessNumbers(e.target.value);
+              renderInto(s);
+            },
+          }),
+          el('input', {
+            type: 'file', accept: '.csv,.txt',
+            style: { marginTop: '8px' },
+            onchange: async (e) => {
+              const f = e.target.files[0];
+              if (!f) return;
+              const text = await f.text();
+              uploadState.numbers = parseProcessNumbers(text);
+              renderInto(s);
+            },
+          }),
+          uploadState.numbers.length
+            ? el('div', { style: { marginTop: '8px', color: 'var(--good)', fontSize: '0.84rem' } },
+                `${uploadState.numbers.length} números válidos extraídos.`)
+            : null,
+        ),
+        uploadState.numbers.length ? el('div', { style: { marginTop: '14px' } },
+          el('label', { class: 'field' }, 'Janela de "snapshot recente"'),
+          el('select', {
+            value: String(uploadState.maxAgeDays),
+            onchange: (e) => uploadState.maxAgeDays = e.target.value === 'null' ? null : Number(e.target.value),
+            style: { maxWidth: '200px' },
+          },
+            el('option', { value: '7' }, '≤ 7 dias'),
+            el('option', { value: '14' }, '≤ 14 dias'),
+            el('option', { value: '30' }, '≤ 30 dias'),
+            el('option', { value: 'null' }, 'Qualquer snapshot conta'),
+          ),
+          ' ',
+          el('button', { class: 'btn ghost small', onclick: async () => {
+            try {
+              const r = await api.snapshotStatus(uploadState.numbers, uploadState.maxAgeDays);
+              uploadState.status = r.results;
+              renderInto(s);
+            } catch (e) { toast(e.message, 'error'); }
+          } }, 'Verificar snapshots existentes'),
+        ) : null,
+        uploadState.status ? renderSnapshotStatusPanel(uploadState.status) : null,
+      ),
+      uploadState.numbers.length && uploadState.name ? el('div', { class: 'card' },
+        el('h3', {}, 'Próximos passos'),
+        el('div', { class: 'row' },
+          el('button', { class: 'btn', onclick: async () => {
+            try {
+              const g = await api.createGroup(uploadState.name, uploadState.numbers);
+              state.groups.unshift({
+                group_id: g.group_id, name: g.name,
+                created_at: g.created_at, count: g.process_numbers.length,
+              });
+              toast('Carteira criada.', 'success');
+              openCarteira(g.group_id);
+            } catch (e) { toast(e.message, 'error'); }
+          } }, '💾 Criar carteira'),
+          el('button', { class: 'btn ghost', onclick: async () => {
+            const need = (uploadState.status || [])
+              .filter(r => r.status !== 'fresh').map(r => r.process_number);
+            const numbersToScrape = need.length ? need : uploadState.numbers;
+            // Pre-flight: don't kick off a scrape if eSAJ is 503-ing.
+            try {
+              const h = await api.esajHealth();
+              if (h.status === 'down') {
+                toast(`eSAJ indisponível (${h.code || ''} ${h.reason || ''}) — não iniciei o scrape. Tente em alguns minutos.`, 'error');
+                return;
+              }
+              if (h.status === 'degraded') {
+                if (!confirm(`eSAJ retornou status ${h.code} (${h.reason || 'degradado'}). Iniciar o scrape mesmo assim?`)) return;
+              }
+            } catch (e) {
+              if (!confirm('Não consegui verificar a disponibilidade do eSAJ (' + e.message + '). Iniciar mesmo assim?')) return;
+            }
+            try {
+              const r = await api.extractStart({
+                process_numbers: numbersToScrape, concurrent: 4,
+              });
+              uploadState.scraping = { jobId: r.job_id, total: numbersToScrape.length, done: 0 };
+              pollScrape(uploadState, () => renderInto(s));
+              renderInto(s);
+            } catch (e) { toast(e.message, 'error'); }
+          } }, '▶ Iniciar scraping'),
+        ),
+        uploadState.scraping ? el('div', { class: 'banner info', style: { marginTop: '12px' } },
+          el('span', {}, `Scrape em andamento (job ${uploadState.scraping.jobId.slice(0, 8)}…) — ${uploadState.scraping.done} / ${uploadState.scraping.total}`),
+        ) : null,
+      ) : null,
+    ));
+  }
+  renderInto(host);
+}
+
+function renderSnapshotStatusPanel(rows) {
+  const counts = rows.reduce((a, r) => { a[r.status] = (a[r.status] || 0) + 1; return a; }, {});
+  return el('div', { class: 'card', style: { marginTop: '14px' } },
+    el('h3', {}, 'Verificação de snapshots existentes'),
+    el('div', { class: 'row' },
+      el('span', { class: 'pill good' }, `${counts.fresh || 0} frescos`),
+      el('span', { class: 'pill warn' }, `${counts.stale || 0} desatualizados`),
+      el('span', { class: 'pill bad'  }, `${counts.missing || 0} ausentes`),
+    ),
+    el('p', { style: { color: 'var(--muted)', fontSize: '0.82rem', marginTop: '8px' } },
+      'Apenas processos não-frescos serão raspados quando você iniciar o scraping.'),
+  );
+}
+
+async function pollScrape(uploadState, redraw) {
+  if (!uploadState.scraping) return;
+  try {
+    const s = await api.extractStatus(uploadState.scraping.jobId);
+    uploadState.scraping.done = s.done; uploadState.scraping.total = s.total;
+    if (s.status === 'done' || s.status === 'error') {
+      uploadState.scraping = null;
+      toast(s.status === 'done' ? 'Scrape concluído.' : 'Scrape com erro: ' + s.error, s.status === 'done' ? 'success' : 'error');
+    } else {
+      setTimeout(() => pollScrape(uploadState, redraw), 2000);
+    }
+    redraw();
+  } catch (e) {
+    uploadState.scraping = null; redraw();
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SCREEN — Construtor (the headliner)
+   ════════════════════════════════════════════════════════════════════ */
+
+function resetBuilder() {
+  state.builder = {
+    queryBody: { where: { and: [] } },
+    select: ['process_number','class_type','foro','foro_name','vara','juiz','value','last_movement_iso'],
+    orderBy: [{ field: 'snapshot_ts', dir: 'desc' }],
+    snapshot: 'latest',
+    flaggedOnly: false, unflaggedOnly: false,
+    scopeGroup: null, mode: 'visual',
+    jsonDraft: null, jsonError: null, savedQueryId: null,
+  };
+  state.results = { total: 0, page: 1, pageSize: 50, rows: [], fields: [], loading: false, error: null, age: null };
+}
+
+function buildBody() {
+  const b = state.builder;
+  const body = {
+    select: b.select,
+    where: simplifyWhere(b.queryBody.where),
+    order_by: b.orderBy,
+    snapshot: b.snapshot,
+    limit: state.results.pageSize,
+    offset: (state.results.page - 1) * state.results.pageSize,
+  };
+  if (b.flaggedOnly) body.flagged_only = true;
+  if (b.unflaggedOnly) body.unflagged_only = true;
+  return body;
+}
+
+function simplifyWhere(w) {
+  // Collapse {and: [single]} to single; {and: []} to undefined.
+  if (w && w.and && Array.isArray(w.and)) {
+    if (w.and.length === 0) return undefined;
+    if (w.and.length === 1) return simplifyWhere(w.and[0]);
+    return { and: w.and.map(simplifyWhere).filter(Boolean) };
+  }
+  if (w && w.or && Array.isArray(w.or)) {
+    if (w.or.length === 0) return undefined;
+    if (w.or.length === 1) return simplifyWhere(w.or[0]);
+    return { or: w.or.map(simplifyWhere).filter(Boolean) };
+  }
+  if (w && w.not) return { not: simplifyWhere(w.not) };
+  return w;
+}
+
+function renderConstrutor(host) {
+  const b = state.builder;
+
+  const screen = el('div', { class: 'screen' },
+    el('div', { class: 'screen-header' },
+      el('h1', {}, 'Construtor de consultas'),
+      el('span', { class: 'sub' }, b.scopeGroup
+        ? `Escopo: ${b.scopeGroup.name} · ${b.scopeGroup.process_numbers.length} processos`
+        : 'Sem escopo — todo o snapshot store'),
+      el('div', { class: 'right' },
+        b.scopeGroup ? el('button', {
+          class: 'btn ghost small',
+          onclick: () => {
+            b.queryBody.where.and = b.queryBody.where.and.filter(c =>
+              !(c.field === 'process_number' && c.op === 'in'));
+            b.scopeGroup = null;
+            render();
+          },
+        }, '✕ Remover escopo') : null,
+        el('button', { class: 'btn ghost small', onclick: () => { resetBuilder(); render(); } }, 'Limpar tudo'),
+      ),
+    ),
+    // Controls bar
+    el('div', { class: 'card' },
+      el('div', { class: 'row', style: { justifyContent: 'space-between' } },
+        el('div', { class: 'row tight' },
+          el('label', { class: 'field', style: { margin: 0 } }, 'Snapshot:'),
+          el('select', {
+            value: typeof b.snapshot === 'object' ? 'at' : b.snapshot,
+            style: { maxWidth: '180px' },
+            onchange: (e) => {
+              if (e.target.value === 'at') {
+                b.snapshot = { at: new Date().toISOString().slice(0, 10) };
+              } else {
+                b.snapshot = e.target.value;
+              }
+              render();
+            },
+          },
+            el('option', { value: 'latest' }, 'Mais recente'),
+            el('option', { value: 'any' }, 'Qualquer snapshot'),
+            el('option', { value: 'at' }, 'A partir de…'),
+          ),
+          typeof b.snapshot === 'object' ? el('input', {
+            type: 'date', value: b.snapshot.at,
+            style: { maxWidth: '160px' },
+            onchange: (e) => { b.snapshot = { at: e.target.value }; },
+          }) : null,
+          el('label', { class: 'checkbox', style: { marginLeft: '14px' } },
+            el('input', {
+              type: 'checkbox', checked: b.flaggedOnly,
+              onchange: (e) => { b.flaggedOnly = e.target.checked; if (e.target.checked) b.unflaggedOnly = false; render(); },
+            }), 'Apenas ★'),
+          el('label', { class: 'checkbox' },
+            el('input', {
+              type: 'checkbox', checked: b.unflaggedOnly,
+              onchange: (e) => { b.unflaggedOnly = e.target.checked; if (e.target.checked) b.flaggedOnly = false; render(); },
+            }), 'Apenas não-★'),
+        ),
+        el('div', { class: 'row tight' },
+          el('a', { class: 'help-link', onclick: () => {
+            b.mode = b.mode === 'visual' ? 'json' : 'visual';
+            if (b.mode === 'json') b.jsonDraft = JSON.stringify(simplifyForJson(), null, 2);
+            else b.jsonDraft = null;
+            render();
+          } }, b.mode === 'visual' ? 'Modo avançado (JSON)' : 'Voltar ao construtor visual'),
+        ),
+      ),
+    ),
+    // Builder body
+    el('div', { class: 'grid-2' },
+      el('div', {},
+        el('h3', { style: { color: 'var(--muted)', fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '8px' } },
+          b.mode === 'visual' ? 'Cláusulas' : 'Modo avançado (JSON)'),
+        b.mode === 'visual'
+          ? renderVisualBuilder()
+          : renderJsonEditor(),
+      ),
+      el('div', {},
+        el('h3', { style: { color: 'var(--muted)', fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '8px' } }, 'Preview do JSON'),
+        el('div', { class: 'json-preview' }, JSON.stringify(buildBody(), null, 2)),
+      ),
+    ),
+    // Run bar
+    el('div', { class: 'card', style: { marginTop: '14px' } },
+      el('div', { class: 'row', style: { justifyContent: 'space-between' } },
+        el('div', { class: 'row tight' },
+          state.results.loading
+            ? el('button', { class: 'btn danger', onclick: cancelRun }, '✕ Cancelar')
+            : el('button', { class: 'btn', onclick: runQuery }, '▶ Executar'),
+          el('button', { class: 'btn ghost', onclick: openSaveDialog }, '💾 Salvar consulta'),
+          el('button', { class: 'btn ghost', onclick: copyJson }, '📋 Copiar JSON'),
+        ),
+        el('span', { style: { color: 'var(--dim)', fontSize: '0.8rem' } },
+          state.results.total
+            ? `Última execução: ${state.results.total.toLocaleString('pt-BR')} resultados`
+            : ''),
+      ),
+    ),
+    // Optional: explain-zero card if last run was 0
+    state.results.total === 0 && state.results.rows.length === 0 && state.results.lastZeroExplain
+      ? renderExplainZero(state.results.lastZeroExplain) : null,
+  );
+  host.appendChild(screen);
+}
+
+function simplifyForJson() {
+  // The JSON the user sees omits the bound limit/offset (those are page-state).
+  const body = buildBody();
+  delete body.limit; delete body.offset;
+  return body;
+}
+
+function renderVisualBuilder() {
+  const b = state.builder;
+  const wrap = el('div', { class: 'builder' });
+  wrap.appendChild(renderNode(b.queryBody.where, b.queryBody, 'where'));
+  return wrap;
+}
+
+/* Recursive node renderer. parent + key tell us where the node lives so we
+   can mutate. mutate() rerenders. */
+function renderNode(node, parent, key) {
+  const setNode = (nv) => { parent[key] = nv; render(); };
+
+  // Boolean group: {and: [...]} or {or: [...]}
+  if (node && (node.and || node.or)) {
+    const isAnd = !!node.and;
+    const children = node.and || node.or;
+    const grpKind = isAnd ? 'AND' : 'OU';
+
+    const wrap = el('div', { class: 'clause' },
+      el('div', { class: 'clause-header' },
+        el('span', { class: 'kind' }, grpKind),
+        el('button', { class: 'btn ghost small', onclick: () => {
+          if (isAnd) { setNode({ or: children }); }
+          else { setNode({ and: children }); }
+        } }, isAnd ? 'Trocar para OU' : 'Trocar para AND'),
+        el('button', { class: 'btn ghost small', onclick: () => {
+          setNode({ not: { [isAnd ? 'and' : 'or']: children } });
+        } }, 'Envolver em NÃO'),
+        el('button', { class: 'delete', title: 'Remover grupo', onclick: () => {
+          // Remove the whole node from its parent context.
+          removeFromParent(parent, key);
+          render();
+        } }, '✕'),
+      ),
+    );
+    const kids = el('div', { class: 'clause-children' });
+    if (!children.length) kids.appendChild(el('div', { class: 'clause-empty' }, 'Sem cláusulas.'));
+    children.forEach((c, i) => {
+      kids.appendChild(renderNode(c, children, i));
+    });
+    wrap.appendChild(kids);
+    wrap.appendChild(el('div', { class: 'clause-toolbar' },
+      el('button', { class: 'btn ghost small', onclick: () => {
+        children.push({ field: 'class_type', op: '=', value: '' }); render();
+      } }, '＋ Cláusula'),
+      el('button', { class: 'btn ghost small', onclick: () => {
+        children.push({ and: [] }); render();
+      } }, '＋ Subgrupo AND'),
+      el('button', { class: 'btn ghost small', onclick: () => {
+        children.push({ or: [] }); render();
+      } }, '＋ Subgrupo OU'),
+      el('button', { class: 'btn ghost small', onclick: () => {
+        children.push({ movimento_any: { field: 'nome', op: 'match', value: '' } }); render();
+      } }, '＋ Existe movimentação'),
+      el('button', { class: 'btn ghost small', onclick: () => {
+        children.push({ linked_any: { field: 'relationship_type', op: '=', value: 'apenso' } }); render();
+      } }, '＋ Existe vinculado'),
+      el('button', { class: 'btn ghost small', onclick: () => {
+        children.push({ peticao_any: { field: 'tipo', op: '=', value: '' } }); render();
+      } }, '＋ Existe petição'),
+      el('button', { class: 'btn ghost small', onclick: () => {
+        children.push({ movimento_count: { op: '>=', value: 1 } }); render();
+      } }, '＋ Contagem mov.'),
+      el('button', { class: 'btn ghost small', onclick: () => {
+        children.push({ linked_count: { op: '>=', value: 1 } }); render();
+      } }, '＋ Contagem vinculados'),
+      el('button', { class: 'btn ghost small', onclick: () => {
+        children.push({ peticao_count: { op: '>=', value: 1 } }); render();
+      } }, '＋ Contagem petições'),
+    ));
+    return wrap;
+  }
+
+  // NOT wrapper
+  if (node && node.not) {
+    return el('div', { class: 'clause' },
+      el('div', { class: 'clause-header' },
+        el('span', { class: 'kind' }, 'NÃO'),
+        el('button', { class: 'btn ghost small', onclick: () => {
+          // Unwrap.
+          parent[key] = node.not; render();
+        } }, 'Remover NÃO'),
+        el('button', { class: 'delete', onclick: () => { removeFromParent(parent, key); render(); } }, '✕'),
+      ),
+      el('div', { class: 'clause-children' }, renderNode(node.not, node, 'not')),
+    );
+  }
+
+  // *_any sub-clauses
+  for (const k of ['movimento_any', 'linked_any', 'peticao_any']) {
+    if (node && node[k]) {
+      const allowed = k === 'movimento_any' ? MOVIMENTO_FIELDS
+                    : k === 'linked_any'    ? LINKED_FIELDS
+                                            : PETICAO_FIELDS;
+      const fts = (k === 'movimento_any');
+      return el('div', { class: 'clause' },
+        el('div', { class: 'clause-header' },
+          el('span', { class: 'kind' }, k === 'movimento_any' ? 'EXISTE MOVIMENTAÇÃO'
+                                       : k === 'linked_any'    ? 'EXISTE VINCULADO'
+                                                              : 'EXISTE PETIÇÃO'),
+          el('button', { class: 'delete', onclick: () => { removeFromParent(parent, key); render(); } }, '✕'),
+        ),
+        el('div', { class: 'clause-children' },
+          renderChildNode(node[k], node, k, allowed, fts),
+        ),
+      );
+    }
+  }
+
+  // *_count
+  for (const k of ['movimento_count', 'linked_count', 'peticao_count']) {
+    if (node && node[k]) {
+      return renderCountClause(node, parent, key, k);
+    }
+  }
+
+  // Leaf (field/op/value) — header scope.
+  if (node && node.field !== undefined) {
+    return renderLeaf(node, parent, key, HEADER_FIELDS, false);
+  }
+
+  return el('div', { class: 'clause-empty' }, '(cláusula vazia)');
+}
+
+function renderChildNode(node, parent, key, allowed, ftsEnabled) {
+  const setNode = (nv) => { parent[key] = nv; render(); };
+  // Inner may be a leaf, AND/OR/NOT, etc. — same grammar but scoped.
+  if (node && (node.and || node.or)) {
+    const isAnd = !!node.and;
+    const children = node.and || node.or;
+    const wrap = el('div', { class: 'clause' },
+      el('div', { class: 'clause-header' },
+        el('span', { class: 'kind' }, isAnd ? 'AND' : 'OU'),
+        el('button', { class: 'btn ghost small', onclick: () => {
+          setNode(isAnd ? { or: children } : { and: children });
+        } }, isAnd ? 'Trocar para OU' : 'Trocar para AND'),
+      ),
+    );
+    const kids = el('div', { class: 'clause-children' });
+    children.forEach((c, i) => kids.appendChild(renderChildNode(c, children, i, allowed, ftsEnabled)));
+    wrap.appendChild(kids);
+    wrap.appendChild(el('div', { class: 'clause-toolbar' },
+      el('button', { class: 'btn ghost small', onclick: () => {
+        children.push({ field: allowed[0].api, op: '=', value: '' }); render();
+      } }, '＋ Cláusula'),
+    ));
+    return wrap;
+  }
+  if (node && node.not) {
+    return el('div', { class: 'clause' },
+      el('div', { class: 'clause-header' },
+        el('span', { class: 'kind' }, 'NÃO'),
+        el('button', { class: 'btn ghost small', onclick: () => { parent[key] = node.not; render(); } }, 'Remover NÃO'),
+      ),
+      el('div', { class: 'clause-children' }, renderChildNode(node.not, node, 'not', allowed, ftsEnabled)),
+    );
+  }
+  return renderLeaf(node, parent, key, allowed, ftsEnabled);
+}
+
+function renderLeaf(node, parent, key, fields, ftsEnabled) {
+  if (!node.field || !fields.find(f => f.api === node.field)) {
+    node.field = fields[0].api; node.op = '=';
+  }
+  const field = fields.find(f => f.api === node.field);
+  const allowedOps = field.ops.filter(op => op !== 'match' || ftsEnabled);
+  if (!allowedOps.includes(node.op)) node.op = allowedOps[0];
+
+  return el('div', { class: 'clause' },
+    el('div', { class: 'clause-row' },
+      el('select', {
+        class: 'field-select',
+        value: node.field,
+        onchange: (e) => { node.field = e.target.value; node.op = ''; render(); },
+      }, ...fields.map(f => el('option', { value: f.api }, f.label))),
+      el('select', {
+        class: 'op-select',
+        value: node.op,
+        onchange: (e) => { node.op = e.target.value; render(); },
+      }, ...allowedOps.map(op => el('option', { value: op }, OP_LABELS[op] || op))),
+      ...renderValueInput(node, field),
+      el('button', { class: 'delete', title: 'Remover cláusula', onclick: () => {
+        removeFromParent(parent, key); render();
+      } }, '✕'),
+    ),
+    node.op === 'match' ? el('div', { style: { color: 'var(--dim)', fontSize: '0.76rem', marginTop: '4px' } },
+      'FTS5: aspas para frases, OR/AND/NOT, * para prefixo. ',
+      el('a', { class: 'help-link', onclick: () => navigate('esquema') }, 'Detalhes →')) : null,
+  );
+}
+
+function renderValueInput(node, field) {
+  if (node.op === 'is_null' || node.op === 'is_not_null') return [];
+  if (node.op === 'in' || node.op === 'not_in') {
+    const v = Array.isArray(node.value) ? node.value.join('\n') : (node.value || '');
+    return [el('textarea', {
+      placeholder: 'Um valor por linha',
+      value: v,
+      style: { minHeight: '50px', fontFamily: 'inherit', fontSize: '0.84rem' },
+      oninput: (e) => {
+        node.value = e.target.value.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+      },
+    })];
+  }
+  // Numeric / date / text scalar input
+  const inputType = field.type === 'int' ? 'number'
+                  : (field.type === 'iso_date' || field.type === 'br_date') ? 'date'
+                  : 'text';
+  return [el('input', {
+    type: inputType,
+    value: node.value !== undefined && node.value !== null ? String(node.value) : '',
+    oninput: (e) => {
+      const raw = e.target.value;
+      node.value = field.type === 'int' ? (raw === '' ? null : Number(raw)) : raw;
+    },
+  })];
+}
+
+function renderCountClause(node, parent, key, kind) {
+  const spec = node[kind];
+  const label = { movimento_count: 'Qtd. movimentações',
+                  linked_count: 'Qtd. vinculados',
+                  peticao_count: 'Qtd. petições' }[kind];
+  return el('div', { class: 'clause' },
+    el('div', { class: 'clause-row' },
+      el('span', { class: 'kind' }, label),
+      el('select', {
+        class: 'op-select',
+        value: spec.op,
+        onchange: (e) => { spec.op = e.target.value; render(); },
+      }, ...['=','!=','<','<=','>','>='].map(op => el('option', { value: op }, op))),
+      el('input', {
+        type: 'number', value: spec.value !== undefined ? String(spec.value) : '0',
+        oninput: (e) => { spec.value = Number(e.target.value) || 0; },
+      }),
+      el('button', { class: 'delete', onclick: () => { removeFromParent(parent, key); render(); } }, '✕'),
+    ),
+  );
+}
+
+function removeFromParent(parent, key) {
+  if (Array.isArray(parent)) parent.splice(key, 1);
+  else delete parent[key];
+}
+
+function renderJsonEditor() {
+  const b = state.builder;
+  return el('div', {},
+    el('textarea', {
+      class: 'json-textarea',
+      value: b.jsonDraft !== null ? b.jsonDraft : JSON.stringify(simplifyForJson(), null, 2),
+      oninput: (e) => { b.jsonDraft = e.target.value; b.jsonError = null; },
+      onfocus: (e) => { b.jsonDraft = e.target.value; },
+      onblur: (e) => {
+        try {
+          const obj = JSON.parse(e.target.value);
+          // Apply to builder state. Accept either a full body or just a where.
+          if (obj && obj.where !== undefined) {
+            b.queryBody = { where: obj.where || { and: [] } };
+            if (obj.select) b.select = obj.select;
+            if (obj.order_by) b.orderBy = obj.order_by;
+            if (obj.snapshot !== undefined) b.snapshot = obj.snapshot;
+            b.flaggedOnly = !!obj.flagged_only;
+            b.unflaggedOnly = !!obj.unflagged_only;
+          } else {
+            // Treat as a bare where clause.
+            b.queryBody = { where: obj };
+          }
+          // Normalize: top-level where should be an AND wrapper for the visual tree.
+          if (b.queryBody.where && !b.queryBody.where.and && !b.queryBody.where.or && !b.queryBody.where.not) {
+            b.queryBody.where = { and: [b.queryBody.where] };
+          } else if (!b.queryBody.where) {
+            b.queryBody.where = { and: [] };
+          }
+          b.jsonError = null; b.jsonDraft = null;
+        } catch (err) {
+          b.jsonError = 'JSON inválido: ' + err.message;
+        }
+        render();
+      },
+    }),
+    b.jsonError ? el('div', { class: 'json-error' }, b.jsonError) : null,
+  );
+}
+
+async function runQuery() {
+  const body = buildBody();
+  state.results.loading = true;
+  state.results.error = null;
+  state.results.lastZeroExplain = null;
+  state.abortRun = new AbortController();
+  render();
+  const startTs = Date.now();
+  try {
+    const r = await api.query(body, state.abortRun.signal);
+    state.results.total = r.total;
+    state.results.rows = r.results;
+    state.results.fields = state.builder.select.slice();
+    state.results.age = startTs;
+    state.results.error = null;
+    if (r.total === 0 && body.where) {
+      try {
+        const ez = await api.explainZero(body);
+        state.results.lastZeroExplain = ez;
+      } catch (_) { /* ignore */ }
+    }
+    // Touch saved query if running from library.
+    if (state.builder.savedQueryId) {
+      try { await api.touchSaved(state.builder.savedQueryId, r.total); } catch (_) {}
+    }
+    if (r.total > 0 || state.route.name !== 'construtor') navigate('resultados');
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      state.results.error = e.message;
+      toast(e.message, 'error');
+    }
+  } finally {
+    state.results.loading = false;
+    state.abortRun = null;
+    render();
+  }
+}
+
+function cancelRun() {
+  if (state.abortRun) state.abortRun.abort();
+  state.results.loading = false;
+  state.abortRun = null;
+  render();
+}
+
+function copyJson() {
+  navigator.clipboard.writeText(JSON.stringify(simplifyForJson(), null, 2))
+    .then(() => toast('JSON copiado.', 'success'))
+    .catch(() => toast('Falha ao copiar.', 'error'));
+}
+
+async function openSaveDialog() {
+  const name = prompt('Nome para a consulta salva:', '');
+  if (!name) return;
+  const description = prompt('Descrição (opcional):', '') || null;
+  try {
+    if (state.builder.savedQueryId) {
+      // Update in place if we're editing a saved query.
+      await api.updateSaved(state.builder.savedQueryId, {
+        name, description, query_body: simplifyForJson(),
+      });
+      toast('Consulta atualizada.', 'success');
+    } else {
+      const r = await api.createSaved({ name, description, query_body: simplifyForJson() });
+      state.builder.savedQueryId = r.id;
+      toast('Consulta salva.', 'success');
+    }
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function renderExplainZero(ez) {
+  if (!ez) return null;
+  if (ez.message) {
+    return el('div', { class: 'card' },
+      el('h3', {}, 'Por que zero?'),
+      el('p', { style: { color: 'var(--muted)' } }, ez.message),
+    );
+  }
+  return el('div', { class: 'card' },
+    el('h3', {}, 'Por que zero?'),
+    el('p', { style: { color: 'var(--muted)', fontSize: '0.86rem', marginBottom: '10px' } },
+      'Cada cláusula executada isoladamente:'),
+    ...ez.clauses.map(c => el('div', {
+      style: { padding: '6px 8px', borderLeft: '3px solid ' + (c.count_alone === 0 ? 'var(--bad)' : 'var(--good)'),
+               background: 'var(--bg)', marginBottom: '6px', fontSize: '0.84rem' },
+    },
+      el('span', { class: 'mono', style: { color: 'var(--accent)' } }, c.decomposition_path),
+      ' → ',
+      el('strong', { style: { color: c.count_alone === 0 ? 'var(--bad)' : 'var(--good)' } },
+        `${c.count_alone.toLocaleString('pt-BR')} resultado${c.count_alone === 1 ? '' : 's'}`),
+      ' · ',
+      el('span', { class: 'mono', style: { color: 'var(--muted)', fontSize: '0.78rem' } },
+        JSON.stringify(c.clause).slice(0, 120)),
+    )),
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SCREEN — Resultados
+   ════════════════════════════════════════════════════════════════════ */
+
+function renderResultados(host) {
+  const r = state.results;
+  const totalPages = Math.max(1, Math.ceil(r.total / r.pageSize));
+  const ageMin = r.age ? Math.round((Date.now() - r.age) / 60000) : null;
+
+  host.appendChild(el('div', { class: 'screen' },
+    el('div', { class: 'screen-header' },
+      el('h1', {}, 'Resultados'),
+      el('span', { class: 'sub' },
+        r.loading ? 'Executando…' :
+        r.total ? `${r.total.toLocaleString('pt-BR')} processos`
+                : 'Nenhum resultado'),
+      ageMin !== null && ageMin >= 5
+        ? el('span', { class: 'pill warn' }, `⚠ Stale — ${ageMin} min atrás`)
+        : ageMin !== null
+          ? el('span', { class: 'pill' }, `${ageMin === 0 ? 'agora' : ageMin + ' min'} atrás`)
+          : null,
+      el('div', { class: 'right' },
+        el('button', { class: 'btn ghost', onclick: () => navigate('construtor') }, '✎ Refinar consulta'),
+        el('button', { class: 'btn ghost', onclick: exportResultsCSV, disabled: !r.rows.length }, '⬇ Exportar CSV'),
+      ),
+    ),
+    r.error ? el('div', { class: 'banner bad' }, r.error) : null,
+    r.loading
+      ? el('div', { class: 'card' }, [...Array(8)].map(() => el('div', { class: 'skeleton skel-row' })))
+      : renderResultsTable(r),
+    r.total ? renderPagination(r.page, totalPages, (p) => {
+      state.results.page = p; runQuery();
+    }) : null,
+  ));
+}
+
+function renderResultsTable(r) {
+  if (!r.rows.length) {
+    return el('div', { class: 'card empty' },
+      'Nenhum resultado. ',
+      el('a', { onclick: () => navigate('construtor') }, 'Voltar ao construtor →'));
+  }
+  const flagSet = state.flags;
+  const tbl = el('table');
+  const head = el('tr', {}, el('th', { style: { width: '32px' } }, '★'));
+  r.fields.forEach(f => head.appendChild(el('th', {}, HEADER_LABEL[f] || f)));
+  tbl.appendChild(el('thead', {}, head));
+  const body = el('tbody');
+  r.rows.forEach(row => {
+    const tr = el('tr');
+    const pn = row.process_number;
+    tr.appendChild(el('td', {},
+      el('button', {
+        class: 'flag ' + (flagSet.has(pn) ? 'on' : ''),
+        title: flagSet.has(pn) ? 'Remover estrela' : 'Marcar com estrela',
+        onclick: () => toggleFlag(pn),
+      }, flagSet.has(pn) ? '★' : '☆'),
+    ));
+    r.fields.forEach(f => {
+      let v;
+      if (f === 'process_number') {
+        tr.appendChild(el('td', { class: 'mono' },
+          el('a', { onclick: () => navigate('detalhe', pn) }, formatCNJ(pn))));
+        return;
+      } else if (f === 'snapshot_ts') v = formatTS(row.fields ? row.fields[f] : row[f]);
+      else if (f === 'value') v = row.fields ? row.fields[f] : row[f];
+      else if (f === 'value_centavos') v = formatBRL(row.fields ? row.fields[f] : row[f]);
+      else if (f === 'last_movement_iso') v = formatISODate(row.fields ? row.fields[f] : row[f]);
+      else v = (row.fields ? row.fields[f] : row[f]) ?? '—';
+      tr.appendChild(el('td', {}, String(v)));
+    });
+    body.appendChild(tr);
+  });
+  tbl.appendChild(body);
+  return el('div', { class: 'table-wrap' }, tbl);
+}
+
+async function toggleFlag(pn) {
+  try {
+    if (state.flags.has(pn)) {
+      await api.unflag(pn); state.flags.delete(pn);
+    } else {
+      await api.flag(pn); state.flags.add(pn);
+    }
+    render();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function renderPagination(current, total, onClick) {
+  const wrap = el('div', { class: 'pagination' });
+  const btn = (label, p, disabled, active) => {
+    const b = el('button', { disabled, class: active ? 'active' : '' }, label);
+    if (!disabled && !active) b.addEventListener('click', () => onClick(p));
+    return b;
+  };
+  wrap.appendChild(btn('‹', current - 1, current <= 1));
+  const start = Math.max(1, current - 2);
+  const end = Math.min(total, start + 4);
+  for (let p = start; p <= end; p++) wrap.appendChild(btn(String(p), p, false, p === current));
+  wrap.appendChild(el('span', { class: 'info' }, `de ${total}`));
+  wrap.appendChild(btn('›', current + 1, current >= total));
+  return wrap;
+}
+
+function exportResultsCSV() {
+  const r = state.results;
+  if (!r.rows.length) return;
+  const header = ['process_number', ...r.fields.filter(f => f !== 'process_number')];
+  const lines = [header.join(',')];
+  r.rows.forEach(row => {
+    const vals = header.map(f => {
+      const v = f === 'process_number' ? row.process_number
+              : (row.fields ? row.fields[f] : row[f]);
+      if (v === null || v === undefined) return '';
+      const s = String(v).replace(/"/g, '""');
+      return /[,"\n]/.test(s) ? `"${s}"` : s;
+    });
+    lines.push(vals.join(','));
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `poursuite_resultados_${Date.now()}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SCREEN — Detalhe do processo
+   ════════════════════════════════════════════════════════════════════ */
+
+async function renderDetalhe(host, args) {
+  const pn = args[0];
+  if (!pn) {
+    host.appendChild(el('div', { class: 'screen empty' }, 'Sem processo informado.'));
+    return;
+  }
+  host.appendChild(el('div', { class: 'screen' },
+    el('div', { class: 'screen-header' },
+      el('h1', { class: 'mono' }, formatCNJ(pn)),
+      el('span', { class: 'sub' }, 'Detalhe do processo (snapshot mais recente)'),
+      el('div', { class: 'right' },
+        el('button', {
+          class: 'flag ' + (state.flags.has(pn) ? 'on' : ''),
+          style: { fontSize: '1.4em' },
+          onclick: () => toggleFlag(pn),
+        }, state.flags.has(pn) ? '★' : '☆'),
+        el('button', {
+          class: 'btn ghost', disabled: true,
+          title: 'Phase 3 — futuro',
+        }, '🔍 Deep search (Fase 3 — futuro)'),
+      ),
+    ),
+    el('div', { id: 'detalhe-body' }, el('div', { class: 'empty' }, 'Carregando…')),
+  ));
+  try {
+    const [snaps, movs, links, peticoes] = await Promise.all([
+      api.listProcessSnapshots(pn),
+      api.getMovimentos(pn),
+      api.getLinks(pn),
+      api.getPeticoes(pn),
+    ]);
+    const body = $('#detalhe-body');
+    clear(body);
+    // Header card: pull latest snapshot fields via /api/query.
+    const q = await api.query({
+      select: HEADER_FIELDS.map(f => f.api),
+      where: { field: 'process_number', op: '=', value: pn },
+      snapshot: 'latest', limit: 1,
+    });
+    const headerRow = q.results[0];
+    if (!headerRow) {
+      body.appendChild(el('div', { class: 'empty' }, 'Processo não encontrado no snapshot store.'));
+      return;
+    }
+    const fields = headerRow.fields || {};
+    body.appendChild(el('div', { class: 'card' },
+      el('h3', {}, 'Capa do processo'),
+      el('div', { class: 'grid-2' },
+        ...HEADER_FIELDS.filter(f => fields[f.api] != null && fields[f.api] !== '' && f.api !== 'process_number')
+          .map(f => el('div', {},
+            el('label', { class: 'field' }, f.label),
+            el('div', {}, f.api === 'value_centavos' ? formatBRL(fields[f.api])
+                       : f.api === 'last_movement_iso' || f.api === 'initial_date' ? formatISODate(fields[f.api])
+                       : f.api === 'snapshot_ts' ? formatTS(fields[f.api])
+                       : String(fields[f.api])),
+          )),
+      ),
+    ));
+    // Snapshots
+    body.appendChild(el('div', { class: 'card' },
+      el('h3', {}, `Histórico (${snaps.results.length} snapshot${snaps.results.length === 1 ? '' : 's'})`),
+      snaps.results.length
+        ? el('div', { class: 'stack' },
+            ...snaps.results.map((s, i) => el('div', {
+              style: { color: i === 0 ? 'var(--text)' : 'var(--muted)', fontSize: '0.84rem' },
+            },
+              el('span', { class: 'mono' }, formatTS(s.snapshot_ts)),
+              ' · ', s.scrape_outcome,
+              i === 0 ? el('span', { class: 'pill good', style: { marginLeft: '8px' } }, 'atual') : null,
+            )))
+        : el('div', { class: 'empty' }, 'Nenhum snapshot.'),
+    ));
+    // Movimentações
+    body.appendChild(el('div', { class: 'card' },
+      el('h3', {}, `Movimentações (${movs.count})`),
+      movs.count
+        ? el('div', { class: 'timeline' }, ...movs.results.map(m => el('div', { class: 'timeline-item' },
+            el('div', { class: 'date' }, m.data_hora ? formatISODate(m.data_hora) : '—'),
+            el('div', { class: 'name' }, m.nome || ''),
+            m.complementos_text ? el('div', { class: 'compl' }, m.complementos_text) : null,
+            m.cd_documento ? el('div', { style: { marginTop: '4px' } },
+              el('span', { class: 'pill info' }, `📄 ${m.cd_documento}`)) : null,
+          )))
+        : el('div', { class: 'empty' }, 'Sem movimentações.'),
+    ));
+    // Linked
+    body.appendChild(el('div', { class: 'card' },
+      el('h3', {}, `Processos vinculados (${links.count})`),
+      links.count
+        ? renderSimpleTable(links.results, [
+            { key: 'linked_number', label: 'Nº', render: (v) => el('a', { class: 'mono', onclick: () => navigate('detalhe', v) }, formatCNJ(v)) },
+            { key: 'relationship_type', label: 'Tipo' },
+          ])
+        : el('div', { class: 'empty' }, 'Sem vinculados.'),
+    ));
+    // Petições
+    body.appendChild(el('div', { class: 'card' },
+      el('h3', {}, `Petições diversas (${peticoes.count})`),
+      peticoes.count
+        ? renderSimpleTable(peticoes.results, [
+            { key: 'ordem', label: 'Ordem' },
+            { key: 'data', label: 'Data' },
+            { key: 'tipo', label: 'Tipo' },
+            { key: 'cd_documento', label: 'Documento', render: (v) => v ? el('span', { class: 'pill info' }, `📄 ${v}`) : '—' },
+          ])
+        : el('div', { class: 'empty' }, 'Sem petições.'),
+    ));
+  } catch (e) {
+    $('#detalhe-body').appendChild(el('div', { class: 'banner bad' }, e.message));
+  }
+}
+
+function renderSimpleTable(rows, cols) {
+  const tbl = el('table');
+  tbl.appendChild(el('thead', {}, el('tr', {}, ...cols.map(c => el('th', {}, c.label)))));
+  const body = el('tbody');
+  rows.forEach(r => {
+    body.appendChild(el('tr', {}, ...cols.map(c => {
+      const v = r[c.key];
+      const node = c.render ? c.render(v, r) : (v == null ? '—' : String(v));
+      return el('td', {}, node);
+    })));
+  });
+  tbl.appendChild(body);
+  return el('div', { class: 'table-wrap' }, tbl);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SCREEN — Consultas salvas
+   ════════════════════════════════════════════════════════════════════ */
+
+async function renderSalvas(host) {
+  host.appendChild(el('div', { class: 'screen' },
+    el('div', { class: 'screen-header' },
+      el('h1', {}, 'Consultas salvas'),
+      el('span', { class: 'sub' }, 'Biblioteca compartilhada — qualquer um pode editar ou apagar.'),
+      el('div', { class: 'right' },
+        el('button', { class: 'btn ghost', onclick: () => { resetBuilder(); navigate('construtor'); } }, '＋ Nova'),
+      ),
+    ),
+    el('div', { id: 'salvas-list', class: 'card' }, el('div', { class: 'empty' }, 'Carregando…')),
+  ));
+  try {
+    const r = await api.listSaved();
+    state.savedQueries = r.results || [];
+    const wrap = $('#salvas-list'); clear(wrap);
+    if (!state.savedQueries.length) {
+      wrap.appendChild(el('div', { class: 'empty' }, 'Nenhuma consulta salva. ',
+        el('a', { onclick: () => { resetBuilder(); navigate('construtor'); } }, 'Compor a primeira →')));
+      return;
+    }
+    const tbl = el('table');
+    tbl.appendChild(el('thead', {}, el('tr', {},
+      el('th', {}, 'Nome'), el('th', {}, 'Descrição'),
+      el('th', {}, 'Última execução'), el('th', { class: 'num' }, '#'),
+      el('th', {}, ''))));
+    const body = el('tbody');
+    state.savedQueries.forEach(q => {
+      body.appendChild(el('tr', {},
+        el('td', {}, el('a', { onclick: () => runSavedQuery(q.id) }, q.name)),
+        el('td', { style: { color: 'var(--muted)' } }, q.description || '—'),
+        el('td', { style: { color: 'var(--muted)' } }, q.last_run_at ? formatTS(q.last_run_at) : '—'),
+        el('td', { class: 'num' }, q.last_run_count != null ? q.last_run_count.toLocaleString('pt-BR') : '—'),
+        el('td', {},
+          el('button', { class: 'btn ghost small', onclick: () => runSavedQuery(q.id) }, '▶'),
+          ' ',
+          el('button', { class: 'btn ghost small', onclick: () => editSavedQuery(q.id) }, '✎'),
+          ' ',
+          el('button', { class: 'btn ghost small', onclick: () => copySavedJSON(q.id) }, '📋'),
+          ' ',
+          el('button', { class: 'btn ghost small danger', onclick: () => deleteSavedQuery(q.id, q.name) }, '🗑'),
+        ),
+      ));
+    });
+    tbl.appendChild(body);
+    wrap.appendChild(tbl);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function runSavedQuery(id) {
+  try {
+    const q = await api.getSaved(id);
+    resetBuilder();
+    Object.assign(state.builder, hydrateBody(q.query_body));
+    state.builder.savedQueryId = id;
+    await runQuery();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function editSavedQuery(id) {
+  try {
+    const q = await api.getSaved(id);
+    resetBuilder();
+    Object.assign(state.builder, hydrateBody(q.query_body));
+    state.builder.savedQueryId = id;
+    navigate('construtor');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function copySavedJSON(id) {
+  try {
+    const q = await api.getSaved(id);
+    await navigator.clipboard.writeText(JSON.stringify(q.query_body, null, 2));
+    toast('JSON copiado.', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deleteSavedQuery(id, name) {
+  if (!confirm(`Apagar "${name}"? Compartilhado — afeta todos com acesso.`)) return;
+  try { await api.deleteSaved(id); toast('Consulta apagada.', 'success'); render(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
+function hydrateBody(body) {
+  // Map an API body back into builder shape (queryBody.where + sidecar fields).
+  const out = {
+    queryBody: { where: body.where || { and: [] } },
+    select: body.select || ['process_number','class_type','foro','foro_name'],
+    orderBy: body.order_by || [{ field: 'snapshot_ts', dir: 'desc' }],
+    snapshot: body.snapshot !== undefined ? body.snapshot : 'latest',
+    flaggedOnly: !!body.flagged_only,
+    unflaggedOnly: !!body.unflagged_only,
+  };
+  // Normalize: wrap top-level non-and/or/not into an AND so the visual tree can hang off.
+  const w = out.queryBody.where;
+  if (w && !w.and && !w.or && !w.not) out.queryBody.where = { and: [w] };
+  return out;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SCREEN — Esquema
+   ════════════════════════════════════════════════════════════════════ */
+
+function renderEsquema(host) {
+  const block = (title, fields, note) => el('div', { class: 'card' },
+    el('h3', {}, title),
+    note ? el('p', { style: { color: 'var(--muted)', fontSize: '0.82rem', marginBottom: '10px' } }, note) : null,
+    el('div', { class: 'table-wrap' },
+      el('table', {},
+        el('thead', {}, el('tr', {},
+          el('th', {}, 'Campo (API)'), el('th', {}, 'Rótulo (PT-BR)'),
+          el('th', {}, 'Tipo'), el('th', {}, 'Operadores válidos'))),
+        el('tbody', {}, ...fields.map(f => el('tr', {},
+          el('td', { class: 'mono' }, f.api),
+          el('td', {}, f.label),
+          el('td', { style: { color: 'var(--muted)' } }, f.type),
+          el('td', { style: { color: 'var(--muted)', fontSize: '0.84rem' } },
+            f.ops.map(op => OP_LABELS[op] || op).join(', ')),
+        ))),
+      ),
+    ),
+  );
+  host.appendChild(el('div', { class: 'screen' },
+    el('div', { class: 'screen-header' },
+      el('h1', {}, 'Esquema'),
+      el('span', { class: 'sub' }, 'Tabela canônica de campos — espelha esaj_query.py.'),
+    ),
+    block('process_snapshot (cabeçalho)', HEADER_FIELDS,
+      'Os 23 campos do cabeçalho. Filtros, ordenação e exibição operam sobre estas colunas.'),
+    block('movimento', MOVIMENTO_FIELDS,
+      'Usados dentro de "Existe movimentação". O operador busca FTS5 (match) só é válido em "nome" e "complementos_text".'),
+    block('linked_process', LINKED_FIELDS),
+    block('peticao', PETICAO_FIELDS),
+    el('div', { class: 'card' },
+      el('h3', {}, 'Meta-operadores e modificadores'),
+      el('div', { class: 'grid-2' },
+        el('div', {},
+          el('strong', {}, 'Composição: '), el('code', {}, 'and'), ', ', el('code', {}, 'or'), ', ', el('code', {}, 'not'),
+          el('br'),
+          el('strong', {}, 'Sub-cláusulas EXISTS: '), el('code', {}, 'movimento_any'), ', ', el('code', {}, 'linked_any'), ', ', el('code', {}, 'peticao_any'),
+          el('br'),
+          el('strong', {}, 'Contagem: '), el('code', {}, 'movimento_count'), ', ', el('code', {}, 'linked_count'), ', ', el('code', {}, 'peticao_count'),
+        ),
+        el('div', {},
+          el('strong', {}, 'Snapshot temporal:'),
+          el('br'), el('code', {}, '"latest"'), ' (padrão)',
+          el('br'), el('code', {}, '"any"'),
+          el('br'), el('code', {}, '{"at": "AAAA-MM-DD"}'),
+          el('br'), el('br'),
+          el('strong', {}, 'Filtros globais (top-level):'),
+          el('br'), el('code', {}, 'flagged_only'), ' / ', el('code', {}, 'unflagged_only'),
+        ),
+      ),
+    ),
+  ));
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SCREEN — Agregados
+   ════════════════════════════════════════════════════════════════════ */
+
+function renderAgregados(host) {
+  const a = state.agg;
+  const screen = el('div', { class: 'screen' },
+    el('div', { class: 'screen-header' },
+      el('h1', {}, 'Visões agregadas'),
+      el('span', { class: 'sub' }, 'Padrões através de muitos casos — distribuição, histograma, estatística.'),
+    ),
+    el('div', { class: 'card' },
+      el('div', { class: 'row' },
+        el('div', {},
+          el('label', { class: 'field' }, 'Agrupar por'),
+          el('select', {
+            value: a.groupBy,
+            style: { maxWidth: '260px' },
+            onchange: (e) => { a.groupBy = e.target.value; runAgg(); },
+          },
+            ...['class_type','foro_code','foro_name','vara','juiz','distribution_year','last_movement_bucket']
+              .map(g => el('option', { value: g }, g === 'last_movement_bucket' ? 'Última mov. (bucket)' : (HEADER_LABEL[g] || g))),
+          ),
+        ),
+        el('div', {},
+          el('label', { class: 'field' }, 'Snapshot'),
+          el('select', {
+            value: a.snapshot,
+            style: { maxWidth: '180px' },
+            onchange: (e) => { a.snapshot = e.target.value; runAgg(); },
+          },
+            el('option', { value: 'latest' }, 'Mais recente'),
+            el('option', { value: 'any' }, 'Qualquer'),
+          ),
+        ),
+        el('label', { class: 'checkbox', style: { marginLeft: '14px' } },
+          el('input', {
+            type: 'checkbox', checked: a.flaggedOnly,
+            onchange: (e) => { a.flaggedOnly = e.target.checked; if (e.target.checked) a.unflaggedOnly = false; runAgg(); },
+          }), 'Apenas ★'),
+        el('label', { class: 'checkbox' },
+          el('input', {
+            type: 'checkbox', checked: a.unflaggedOnly,
+            onchange: (e) => { a.unflaggedOnly = e.target.checked; if (e.target.checked) a.flaggedOnly = false; runAgg(); },
+          }), 'Apenas não-★'),
+        el('button', { class: 'btn', onclick: runAgg }, '▶ Atualizar'),
+      ),
+    ),
+    el('div', { class: 'grid-2' },
+      el('div', { class: 'card', id: 'agg-groupby' },
+        el('h3', {}, 'Distribuição'),
+        el('div', { class: 'empty' }, 'Clique em “Atualizar”.'),
+      ),
+      el('div', { class: 'card', id: 'agg-hist' },
+        el('h3', {}, 'Histograma de valores'),
+        el('div', { class: 'empty' }, 'Clique em “Atualizar”.'),
+      ),
+    ),
+    el('div', { class: 'card', id: 'agg-stats' },
+      el('h3', {}, 'Estatísticas (valor)'),
+      el('div', { class: 'empty' }, 'Clique em “Atualizar”.'),
+    ),
+  );
+  host.appendChild(screen);
+}
+
+async function runAgg() {
+  const a = state.agg;
+  const base = { snapshot: a.snapshot };
+  if (a.flaggedOnly) base.flagged_only = true;
+  if (a.unflaggedOnly) base.unflagged_only = true;
+  a.loading = true;
+  try {
+    const [gb, hist, stats] = await Promise.all([
+      api.aggGroupBy({ ...base, group_by: a.groupBy }),
+      api.aggHistogram({ ...base, field: 'value' }),
+      api.aggStats({ ...base, field: 'value' }),
+    ]);
+    a.groupByData = gb; a.histData = hist; a.statsData = stats;
+    a.loading = false;
+
+    const gWrap = $('#agg-groupby'); clear(gWrap);
+    gWrap.appendChild(el('h3', {}, 'Distribuição'));
+    const max = Math.max(1, ...gb.results.map(r => r.count));
+    const total = gb.results.reduce((s, r) => s + r.count, 0) || 1;
+    gb.results.slice(0, 20).forEach(row => {
+      const pct = (row.count / total * 100).toFixed(1);
+      gWrap.appendChild(el('div', {
+        class: 'bar-row clickable',
+        onclick: () => drillDown(a.groupBy, row.value),
+      },
+        el('div', { class: 'label', title: row.value }, row.value || '(vazio)'),
+        el('div', { class: 'bar' }, el('div', { style: { width: (row.count / max * 100).toFixed(1) + '%' } })),
+        el('div', { class: 'count' }, row.count.toLocaleString('pt-BR')),
+        el('div', { class: 'pct' }, pct + '%'),
+      ));
+    });
+
+    const hWrap = $('#agg-hist'); clear(hWrap);
+    hWrap.appendChild(el('h3', {}, 'Histograma de valores'));
+    const hmax = Math.max(1, ...hist.results.map(r => r.count));
+    hist.results.forEach(row => {
+      const label = row.range_high === null
+        ? `≥ R$ ${(row.range_low / 1000).toLocaleString('pt-BR')}k`
+        : `R$ ${(row.range_low / 1000).toLocaleString('pt-BR')}k – ${(row.range_high / 1000).toLocaleString('pt-BR')}k`;
+      hWrap.appendChild(el('div', { class: 'bar-row' },
+        el('div', { class: 'label' }, label),
+        el('div', { class: 'bar' }, el('div', { style: { width: (row.count / hmax * 100).toFixed(1) + '%' } })),
+        el('div', { class: 'count' }, row.count.toLocaleString('pt-BR')),
+      ));
+    });
+
+    const sWrap = $('#agg-stats'); clear(sWrap);
+    sWrap.appendChild(el('h3', {}, 'Estatísticas (valor)'));
+    if (!stats.count) {
+      sWrap.appendChild(el('div', { class: 'empty' }, 'Sem valores numéricos no escopo.'));
+    } else {
+      sWrap.appendChild(el('div', { class: 'grid-3' },
+        statTile('Total', stats.count.toLocaleString('pt-BR')),
+        statTile('Soma', formatBRL(stats.sum, true)),
+        statTile('Média', formatBRL(stats.mean, true)),
+        statTile('Mediana', formatBRL(stats.median, true)),
+        statTile('Mínimo', formatBRL(stats.min, true)),
+        statTile('Máximo', formatBRL(stats.max, true)),
+      ));
+    }
+  } catch (e) { toast(e.message, 'error'); a.loading = false; }
+}
+
+function statTile(label, value) {
+  return el('div', {
+    style: { background: 'var(--bg)', border: '1px solid var(--border)',
+             borderRadius: '6px', padding: '10px 14px' },
+  },
+    el('div', { style: { color: 'var(--muted)', fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.08em' } }, label),
+    el('div', { style: { fontSize: '1.05rem', fontWeight: 600, marginTop: '4px' } }, value),
+  );
+}
+
+function drillDown(field, value) {
+  resetBuilder();
+  state.builder.queryBody.where.and.push({ field, op: '=', value });
+  navigate('construtor');
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SCREEN — Busca DJE (legacy /search reuse)
+   ════════════════════════════════════════════════════════════════════ */
+
+function renderDJE(host) {
+  const dje = { keywords: '', start: '', end: '', exclude: '', pageSize: 50, page: 1, data: null, loading: false };
+
+  function renderInto(s) {
+    clear(s);
+    s.appendChild(el('div', { class: 'screen' },
+      el('div', { class: 'screen-header' },
+        el('h1', {}, 'Busca no DJE'),
+        el('span', { class: 'sub' }, 'FTS5 sobre os ~677 GB de publicações TJSP.'),
+      ),
+      el('div', { class: 'card' },
+        el('div', { class: 'grid-2' },
+          el('div', {},
+            el('label', { class: 'field' }, 'Palavras-chave (FTS5)'),
+            el('input', { type: 'text', value: dje.keywords,
+              placeholder: 'ex: SISBAJUD OR (penhora AND conta)',
+              oninput: (e) => dje.keywords = e.target.value }),
+          ),
+          el('div', { class: 'row tight' },
+            el('div', { style: { flex: 1 } },
+              el('label', { class: 'field' }, 'Data inicial'),
+              el('input', { type: 'date', value: dje.start, oninput: (e) => dje.start = e.target.value }),
+            ),
+            el('div', { style: { flex: 1 } },
+              el('label', { class: 'field' }, 'Data final'),
+              el('input', { type: 'date', value: dje.end, oninput: (e) => dje.end = e.target.value }),
+            ),
+          ),
+        ),
+        el('label', { class: 'field' }, 'Termos de exclusão'),
+        el('input', { type: 'text', value: dje.exclude,
+          placeholder: 'palavras a remover dos processos casados',
+          oninput: (e) => dje.exclude = e.target.value }),
+        el('div', { class: 'row', style: { marginTop: '12px' } },
+          el('button', { class: 'btn', onclick: async () => {
+            dje.loading = true; renderInto(s);
+            try {
+              const p = new URLSearchParams();
+              if (dje.keywords) p.set('keywords', dje.keywords);
+              if (dje.start) p.set('start_date', dje.start);
+              if (dje.end) p.set('end_date', dje.end);
+              if (dje.exclude) p.set('exclusion_terms', dje.exclude);
+              p.set('page', String(dje.page));
+              p.set('page_size', String(dje.pageSize));
+              const r = await api.searchDJE(p);
+              dje.data = r;
+              // Compare against snapshot store (formatted CNJ — both sides agree)
+              if (r.results && r.results.length) {
+                const nums = r.results.map(x => formatCNJ(x.process_number));
+                try {
+                  const s2 = await api.snapshotStatus(nums, null);
+                  const idx = {}; s2.results.forEach(x => idx[x.process_number] = x.status);
+                  r.results.forEach(x => x._snapStatus = idx[formatCNJ(x.process_number)] || 'missing');
+                } catch (_) {}
+              }
+              dje.loading = false; renderInto(s);
+            } catch (e) { toast(e.message, 'error'); dje.loading = false; renderInto(s); }
+          } }, '🔎 Buscar'),
+          dje.data?.results?.length ? el('button', { class: 'btn ghost', onclick: () => promoteToGroup(dje) },
+            'Promover para nova carteira →') : null,
+        ),
+      ),
+      dje.loading
+        ? el('div', { class: 'card' }, [...Array(5)].map(() => el('div', { class: 'skeleton skel-row' })))
+        : (dje.data ? renderDJEResults(dje) : null),
+    ));
+  }
+  renderInto(host);
+}
+
+function renderDJEResults(dje) {
+  if (!dje.data.results || !dje.data.results.length) {
+    return el('div', { class: 'card empty' }, 'Sem resultados.');
+  }
+  return el('div', { class: 'card' },
+    el('h3', {}, `${dje.data.total_processes} processos`),
+    el('div', { class: 'stack' },
+      ...dje.data.results.map(p => el('div', {
+        style: { padding: '8px 10px', background: 'var(--bg)', border: '1px solid var(--border)',
+                 borderRadius: '6px' },
+      },
+        el('div', { class: 'row' },
+          el('a', { class: 'mono', onclick: () => navigate('detalhe', formatCNJ(p.process_number)) }, p.process_number),
+          el('span', { class: 'pill' }, `${p.mention_count} menção${p.mention_count === 1 ? '' : 'ões'}`),
+          p._snapStatus ? el('span', {
+            class: 'pill ' + (p._snapStatus === 'fresh' ? 'good' : p._snapStatus === 'stale' ? 'warn' : 'bad'),
+          }, p._snapStatus === 'fresh' ? 'snapshot atual' : p._snapStatus === 'stale' ? 'snapshot desatualizado' : 'sem snapshot') : null,
+        ),
+      )),
+    ),
+  );
+}
+
+async function promoteToGroup(dje) {
+  const name = prompt('Nome da nova carteira:', '');
+  if (!name) return;
+  const nums = dje.data.results.map(p => formatCNJ(p.process_number));
+  try {
+    const g = await api.createGroup(name, nums);
+    toast('Carteira criada.', 'success');
+    openCarteira(g.group_id);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   BOOTSTRAP
+   ════════════════════════════════════════════════════════════════════ */
+
+async function loadFlags() {
+  try {
+    const r = await api.listFlags();
+    state.flags = new Set(r.flagged || []);
+  } catch (_) { /* tolerate */ }
+}
+
+function setupLogin() {
+  const doLogin = () => {
+    const k = $('#loginKey').value.trim();
+    if (!k) return;
+    sessionStorage.setItem('poursuiteKey', k);
+    bootstrap();
+  };
+  $('#loginBtn').addEventListener('click', doLogin);
+  $('#loginKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+}
+
+function setupHeader() {
+  $('#apiKeyHeader').addEventListener('input', (e) => {
+    sessionStorage.setItem('poursuiteKey', e.target.value.trim());
+  });
+  $('#logoutBtn').addEventListener('click', () => {
+    sessionStorage.removeItem('poursuiteKey');
+    state.flags = new Set(); state.groups = []; state.savedQueries = [];
+    location.hash = '';
+    render();
+  });
+  $('#sideNav').querySelectorAll('a').forEach(a => {
+    a.addEventListener('click', () => navigate(a.dataset.route));
+  });
+}
+
+async function bootstrap() {
+  if (apiKey()) {
+    await loadFlags();
+  }
+  render();
+}
+
+window.addEventListener('hashchange', onHashChange);
+state.route = parseHash();
+setupLogin();
+setupHeader();
+bootstrap();
+</script>
+</body>
+</html>

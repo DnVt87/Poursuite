@@ -59,6 +59,54 @@ def format_currency(value: str) -> Optional[str]:
     return value
 
 
+def parse_brl_to_centavos(value: Optional[str]) -> Optional[int]:
+    """Parse a BRL string like 'R$ 1.234,56' or '1234,56' to integer centavos.
+
+    Returns None on missing/unparseable input. Zero is treated as missing data
+    (eSAJ frequently emits 'R$ 0,00' for cases with no declared valor) so that
+    histograms and stats don't count it as a real R$ 0 case.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    cleaned = re.sub(r'[^\d,]', '', value)
+    if not cleaned:
+        return None
+    if ',' in cleaned:
+        whole, _, frac = cleaned.partition(',')
+        frac = (frac + '00')[:2]
+    else:
+        whole, frac = cleaned, '00'
+    if not whole:
+        return None
+    try:
+        cents = int(whole) * 100 + int(frac)
+    except ValueError:
+        return None
+    return cents if cents > 0 else None
+
+
+def parse_brazilian_date_to_iso(value: Optional[str]) -> Optional[str]:
+    """Parse 'DD/MM/YYYY' (optionally followed by HH:MM[:SS]) to ISO 'YYYY-MM-DD'.
+
+    Returns None on missing/unparseable input. Only checks structural validity
+    (digit counts and ranges) — does not validate month-day combinations like
+    31/02. That's good enough for SQL ordering and bucket math.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    m = re.match(r'\s*(\d{2})/(\d{2})/(\d{4})', value)
+    if not m:
+        return None
+    dd, mm, yyyy = m.groups()
+    try:
+        d, mo, y = int(dd), int(mm), int(yyyy)
+    except ValueError:
+        return None
+    if not (1 <= d <= 31 and 1 <= mo <= 12 and 1900 <= y <= 2100):
+        return None
+    return f"{yyyy}-{mm}-{dd}"
+
+
 # Characters that are genuinely dangerous in FTS5 (cause syntax errors) but are NOT
 # part of valid query syntax. Parentheses, AND/OR/NOT, quotes, and * are valid FTS5
 # syntax and must NOT be escaped.

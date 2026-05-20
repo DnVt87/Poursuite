@@ -1,6 +1,7 @@
 import logging
 import re
 import threading
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Dict, List, Optional
 
@@ -27,6 +28,7 @@ from poursuite.models import (
 )
 from poursuite.scraper._chrome import configure_chrome_options
 from poursuite.scraper.cnj_origem import derive_from_cnj
+from poursuite.utils import parse_brazilian_date_to_iso, parse_brl_to_centavos
 from poursuite.scraper.linked import parse_linked
 from poursuite.scraper.movimentos import is_full_timeline, parse_movimentos
 from poursuite.scraper.peticoes import parse_peticoes
@@ -227,6 +229,7 @@ class ProcessValueScraper:
                 foro_code=derived["foro_code"],
                 tribunal_code=derived["tribunal_code"],
                 distribution_year=derived["distribution_year"],
+                foro_name=derived["foro_name"],
             )
         try:
             data = {
@@ -260,6 +263,9 @@ class ProcessValueScraper:
                 foro_code=derived["foro_code"],
                 tribunal_code=derived["tribunal_code"],
                 distribution_year=derived["distribution_year"],
+                foro_name=derived["foro_name"],
+                last_movement_iso=parse_brazilian_date_to_iso(data["last_movement"]),
+                value_centavos=parse_brl_to_centavos(data["value"]),
                 error=None,
             )
         except Exception as e:
@@ -313,7 +319,10 @@ class ProcessValueScraper:
             return process_data
 
         except Exception as e:
-            return ProcessData(number=process_number, error=str(e))
+            return ProcessData(
+                number=process_number,
+                error=f"{type(e).__name__}: {e}\n{traceback.format_exc()}",
+            )
 
     def get_process_record(
         self,
@@ -391,7 +400,10 @@ class ProcessValueScraper:
 
         except Exception as e:
             return ScrapeResult(
-                process_data=ProcessData(number=process_number, error=str(e)),
+                process_data=ProcessData(
+                    number=process_number,
+                    error=f"{type(e).__name__}: {e}\n{traceback.format_exc()}",
+                ),
             )
 
     def _get_other_processes_count(

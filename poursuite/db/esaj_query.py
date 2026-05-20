@@ -29,6 +29,8 @@ HEADER_FIELDS: Tuple[str, ...] = (
     "foro", "vara", "juiz", "controle", "outros_assuntos", "outros_numeros",
     "local_fisico", "area", "foro_code", "tribunal_code", "distribution_year",
     "scrape_outcome", "scrape_error",
+    # UI Phase 2.5: normalized / promoted derived columns (schema v4).
+    "foro_name", "last_movement_iso", "value_centavos",
 )
 
 MOVIMENTO_FIELDS: Tuple[str, ...] = (
@@ -364,6 +366,78 @@ def _validate_order_by(order_by: Any) -> List[Tuple[str, str]]:
 # Top-level entry point
 # ──────────────────────────────────────────────────────────────────────
 
+def _apply_flag_filter(
+    where_sql: str, params: List[Any], body: Dict[str, Any]
+) -> Tuple[str, List[Any]]:
+    """Append `flagged_only` / `unflagged_only` top-level filters to where_sql.
+
+    These are top-level on the request body (not inside `where`) so that the
+    visual builder doesn't need to know about a virtual `flagged` field. The
+    EXISTS/NOT EXISTS clause adds no bound parameters; params is returned
+    unchanged but kept in the signature for caller symmetry.
+
+    Limitation: cannot compose with OR/NOT inside `where` (the filter is an
+    outer AND). Acceptable for v1; the proper LEFT JOIN refactor is the
+    additive path if it becomes a real need.
+    """
+    flagged_only = bool(body.get("flagged_only"))
+    unflagged_only = bool(body.get("unflagged_only"))
+    if flagged_only and unflagged_only:
+        raise QueryError("flagged_only and unflagged_only are mutually exclusive")
+    if flagged_only:
+        where_sql = (
+            f"({where_sql}) AND EXISTS ("
+            "SELECT 1 FROM process_flags pf "
+            "WHERE pf.process_number = ps.process_number)"
+        )
+    elif unflagged_only:
+        where_sql = (
+            f"({where_sql}) AND NOT EXISTS ("
+            "SELECT 1 FROM process_flags pf "
+            "WHERE pf.process_number = ps.process_number)"
+        )
+    return where_sql, params
+
+
+def synth_where_only(body: Dict[str, Any]) -> Tuple[str, List[Any], List[str]]:
+    """Synthesize the WHERE fragment + params for a query body.
+
+    Returns `(where_sql, params, joins)` where:
+      - `where_sql` is the user's WHERE tree AND-merged with the snapshot
+        predicate AND-merged with the optional flagged_only/unflagged_only
+        filter. Callers don't need to know snapshot semantics or how flag
+        filtering is wired.
+      - `params` is the bound-parameter list in the order `where_sql` consumes
+        them: WHERE-tree params first, then snapshot-predicate params.
+      - `joins` is the slot for `LEFT JOIN ...` fragments. In v1 this is
+        always an empty list — kept in the signature so a future refactor
+        (e.g. promoting `flagged` to a first-class field) is additive.
+
+    The function operates on `ps`-aliased `process_snapshot` rows. Callers
+    are responsible for assembling the full SELECT/ORDER/LIMIT envelope.
+    """
+    if not isinstance(body, dict):
+        raise QueryError(f"body must be a dict, got {type(body).__name__}")
+
+    where = body.get("where")
+    where_ctx = _Ctx(params=[])
+    snapshot_ctx = _Ctx(params=[])
+
+    snapshot_sql = _snapshot_predicate(body.get("snapshot"), snapshot_ctx)
+    if where is None:
+        where_sql = "1=1"
+    else:
+        where_sql = _synth_clause(where, where_ctx)
+
+    combined_where = f"({where_sql}) AND ({snapshot_sql})"
+    combined_params = where_ctx.params + snapshot_ctx.params
+
+    combined_where, combined_params = _apply_flag_filter(
+        combined_where, combined_params, body
+    )
+    return combined_where, combined_params, []
+
+
 @dataclass
 class BuiltQuery:
     select_sql: str
@@ -397,20 +471,7 @@ def build_query(body: Dict[str, Any]) -> BuiltQuery:
 
     count_only = bool(body.get("count_only", False))
 
-    where = body.get("where")
-    where_ctx = _Ctx(params=[])
-    snapshot_ctx = _Ctx(params=[])
-
-    snapshot_sql = _snapshot_predicate(body.get("snapshot"), snapshot_ctx)
-    if where is None:
-        where_sql = "1=1"
-    else:
-        where_sql = _synth_clause(where, where_ctx)
-
-    # Order of params: WHERE clause first, then snapshot predicate, then LIMIT/OFFSET.
-    # Same combined WHERE used for both result + count queries.
-    combined_where = f"({where_sql}) AND ({snapshot_sql})"
-    combined_params = where_ctx.params + snapshot_ctx.params
+    combined_where, combined_params, _joins = synth_where_only(body)
 
     select_cols = ", ".join(f"ps.{f}" for f in fields)
     select_cols_with_ts = select_cols
