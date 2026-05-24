@@ -2,7 +2,7 @@
 
 A development reference describing the current state of the Poursuite codebase. Poursuite is a search and data-extraction system for Brazilian court documents (TJSP — Tribunal de Justiça de São Paulo). It indexes the Diário de Justiça Eletrônico (DJE) into time-partitioned SQLite databases, exposes full-text search via FastAPI + a single-page web frontend, and provides a Selenium-based scraper for fetching live process metadata from the eSAJ system.
 
-> Last verified May 2026. When code drifts from this document, treat the code as authoritative and update this file.
+> Last verified May 2026 (refreshed for Phase 3 / Layer 3 probes + Track A default-flip). When code drifts from this document, treat the code as authoritative and update this file.
 
 ---
 
@@ -82,9 +82,19 @@ poursuite/                        ← installed package
 │   ├── esaj_snapshots.py         ← SnapshotStore + migrations v2 (cd_documento) / v3 (flags + saved_queries) / v4 (normalized columns)
 │   ├── esaj_query.py             ← build_query + synth_where_only (WHERE-tree synthesis)
 │   └── process_groups.py         ← ProcessGroupStore (JSON file, write-rename atomicity)
+├── probes/                       ← read-only diagnostics; nothing here is imported by api/db/scraper
+│   ├── __init__.py               ← PROBES_ROOT, make_run_dir, write_json/read_json helpers
+│   ├── cli.py                    ← `python -m poursuite.probes <subcommand>` (datajud / receita / esaj / phase3 / layer3 / report)
+│   ├── datajud.py                ← DataJud Elasticsearch API probe (party-stripping experiments, cross-tribunal liveness)
+│   ├── esaj_inventory.py         ← eSAJ consulta-page full inventory walker
+│   ├── receita.py                ← Receita CNPJ layout / sample probe
+│   ├── tpu.py                    ← TPU movement-code helpers
+│   ├── phase3_probe.py           ← eSAJ document download + PyMuPDF extraction probe (see §10.4)
+│   └── layer3_probe.py           ← DataJud name-search quality probe (see §10.4)
 └── scraper/
     ├── esaj.py                   ← ProcessValueScraper (Selenium pool against eSAJ)
-    └── csv_extractor.py          ← CSVProcessExtractor (extract process numbers from CSV)
+    ├── csv_extractor.py          ← CSVProcessExtractor (extract process numbers from CSV)
+    └── backfill_other_processes.py  ← CLI: re-scrape loaded snapshots whose other_processes is NULL (see §7.3)
 
 maintenance/                      ← offline / operational scripts (orchestrated by update_database.py)
 ├── DownloadDJE.py                ← scrape DJE PDFs from TJSP
@@ -287,7 +297,7 @@ Headless-Selenium scraper against `https://esaj.tjsp.jus.br/cpopg/open.do`. Each
 
 - `ThreadPoolExecutor(max_workers=max_concurrent_browsers)` (default 4, capped 1–8 by the API schema).
 - `progress_callback(ProcessData)` fires as each future completes — used by the API to push partial results into the in-memory job state.
-- Default for `include_other_processes` is **False** in batch mode (it doubles the number of eSAJ requests); the per-process default is True.
+- Default for `include_other_processes` on the batch methods is **False** (the library entry point stays cheap-by-default — the secondary search ~doubles per-process work). The single-process methods (`get_process_data`, `get_process_record`) default `True`. The API (`ExtractStartRequest`, §8.5) and UI checkbox both default **True**, so the production scrape path *does* populate the field; opt-out is explicit per request.
 - Errors at any layer (validation, extraction, worker) become `ProcessData(error=..., number=...)` rather than exceptions — the batch never aborts on a single bad input.
 
 ### 7.2 [`scraper/csv_extractor.py`](poursuite/scraper/csv_extractor.py) — `CSVProcessExtractor`
@@ -299,6 +309,18 @@ Pulls process numbers out of arbitrary CSVs (e.g. exports from external search e
 - Applies `re.findall(PROCESS_NUMBER_PATTERN, cell)` to every cell in the matched column. Returns a `Set[str]` (deduplicated).
 - Encoding: `utf-8-sig` (strips BOM) with `errors='replace'`.
 - Fallback: if structured parsing throws, treats the whole file as a single string and runs the regex globally — useful when the input is malformed.
+
+### 7.3 [`scraper/backfill_other_processes.py`](poursuite/scraper/backfill_other_processes.py)
+
+One-shot CLI utility to retroactively populate `process_snapshot.other_processes` for cases scraped before the API default flipped to `True`. Walks all `process_number`s whose latest snapshot has `scrape_outcome='loaded'` and `other_processes IS NULL`, re-scrapes each via `process_batch_records(include_other_processes=True, include_movimentos=True)`, and writes a new snapshot row through `SnapshotStore.save_snapshot` — append-on-change semantics preserve the prior NULL rows.
+
+```bash
+python -m poursuite.scraper.backfill_other_processes --dry-run
+python -m poursuite.scraper.backfill_other_processes              # backfill all
+python -m poursuite.scraper.backfill_other_processes --max-cases 10 --concurrent 2
+```
+
+Provenance: Track A investigation, May 2026 — see `CLAUDE_CODE_BRIEF_TRACK_A_OTHER_PROCESSES.md`. Background: 11 / 11 production snapshots had `other_processes` NULL because every layer of the call stack defaulted to False; the field worked correctly when invoked, just never invoked. F1 (default-flip) addresses future scrapes; this utility addresses already-persisted snapshots.
 
 ---
 
@@ -360,8 +382,11 @@ Body schema (`ExtractStartRequest`):
 ```python
 process_numbers: List[str] = Field(..., min_length=1)
 concurrent: int = Field(default=DEFAULT_MAX_BROWSERS, ge=1, le=8)
-include_other_processes: bool = False
+include_other_processes: bool = True   # flipped from False, Track A May 2026
+include_movimentos: bool = True
 ```
+
+The `include_other_processes` default is `True` so the snapshot store reliably carries the parallel-case triage signal. Per-request opt-out is supported (the field is just `False` in the body). The UI checkbox `#eIncludeOther` is `checked` by default; unticking it sends `False`. Library batch entry points (`process_batch`, `process_batch_records`) keep `False` defaults — the opinionated default lives in the UI/API layer where operator intent is captured, not in the scraper library.
 
 - Generates a UUID; initializes `_jobs[job_id] = {status:"pending", total:N, done:0, results:[], error:None}`.
 - Spawns a **daemon** `threading.Thread` running `_run_extraction(...)`, which:
@@ -494,6 +519,28 @@ These are **not** imported at runtime; they are imported by `update_database.py`
 - **VACUUM may fail with "database is locked"** under certain timings (the script has a fallback that logs the warning and continues without VACUUM).
 - **Specialized indices (`idx_process_content`, `idx_document_process`, `idx_file_path`) are inconsistently persisted.** The runtime doesn't require them — search uses FTS5 — but they would speed up some queries. Pre-existing behavior; not addressed in this work.
 
+### 10.4 Diagnostic probes ([`poursuite/probes/`](poursuite/probes/))
+
+Read-only investigation tools. Nothing in `poursuite/probes/` is imported by `poursuite.api`, `poursuite.db`, or `poursuite.scraper` (`__init__.py` enforces this convention). Probes write artifacts to `<POURSUITE_LOG_DIR>/probes/<probe_name>_<ts>/` — raw JSON / PDFs / extracted text plus a Markdown findings report.
+
+**CLI:** `python -m poursuite.probes <subcommand>` — driven by [`probes/cli.py`](poursuite/probes/cli.py). Subcommands:
+
+| Subcommand | Module | Purpose |
+|---|---|---|
+| `datajud` | `probes/datajud.py` | DataJud public Elasticsearch API — per-process queries + five challenge experiments (party stripping, CPF/CNPJ search, sealed cases, undocumented endpoints, cross-tribunal field stripping). |
+| `esaj` | `probes/esaj_inventory.py` | Full structural inventory of an eSAJ consulta page (driven by the production scraper's Selenium stack). |
+| `receita` | `probes/receita.py` | Receita CNPJ layout check / sample. |
+| `phase3` | `probes/phase3_probe.py` | eSAJ document download + extraction (see findings below). |
+| `layer3` | `probes/layer3_probe.py` | DataJud name-search quality (see findings below). |
+| `report` | — | Consolidate the latest run from each into `latest_report.md`. |
+
+**Key findings (May 2026):**
+
+- **Phase 3 — eSAJ documents need a Selenium-mediated viewer flow.** Plain HTTP against the `abrirDocumentoVinculadoMovimentacao.do?cdDocumento=…` URL is rejected ("Não foi possível validar o seu acesso a esse recurso"). The doc URL returns an HTML viewer ("Pasta Digital"); the actual PDF lives behind a ticketed hop (`pastadigital/abrirDocumentoEdt.do?…&ticket=<encrypted>`) that JavaScript fires after a click. The working pattern (validated 50 / 50 PDFs across 4 cases, median ~2 s/doc): Selenium loads the case page via the production scraper's form-submit flow → JS-clicks the doc anchor → waits for the new window's `<iframe id="documento">` `src` to be set → decodes the `file=` query param → urllib-fetches `/pastadigital/getPDF.do?…` with cookies harvested from the driver. Phase 3 deep-search must adopt this; the v3.1 plan's "download PDFs via cdDocumento" line was too optimistic about plain HTTP.
+- **Layer 3 — DataJud public API has no name search.** Five query variants (`match.nomeParte`, `match.partes.nome`, `match.nomePessoa`, `multi_match` across 4 fields, `query_string` with quoted full name) all return 0 hits against a known indexed debtor. Party data is stripped from responses *and* unindexed. Cross-tribunal name search via DataJud alone is not feasible; Layer 3 must redesign (per-process enrichment, per-tribunal eSAJ name-search aggregator, or deferral).
+
+Probes use the methodology from [PLAN.md](PLAN.md) §11: verify before building, record everything, surface unexpected findings as findings. Reports are kept across runs (no auto-cleanup) so prior empirical conclusions remain reviewable.
+
 ---
 
 ## 11. Packaging & Tooling
@@ -512,6 +559,7 @@ These are **not** imported at runtime; they are imported by `update_database.py`
   - `beautifulsoup4>=4.0`
   - `pandas>=2.0`
   - `tabulate>=0.9`
+  - `pymupdf>=1.24` (PDF analysis for the Phase 3 probe; not yet used by production code, but the dep is declared because the probe lives in the package)
 - No dev-deps section; no formal test suite is checked in.
 
 ### `.gitignore`
@@ -652,3 +700,5 @@ snapshot data from the DJE shards if disk pressure shifts.
 | Change the API key | Set `POURSUITE_API_KEY` env var and restart |
 | Run the offline pipeline | `python update_database.py` (full auto-run) — see §10.1 for overrides |
 | Free up staging disk space | `python update_database.py cleanup-staging --year YYYY` after both halves of `YYYY` are published |
+| Run a diagnostic probe | `python -m poursuite.probes <subcommand>` — see §10.4 |
+| Backfill `other_processes` on old snapshots | `python -m poursuite.scraper.backfill_other_processes` — see §7.3 |
