@@ -8,6 +8,8 @@ from typing import List, Optional
 from poursuite.probes import PROBES_ROOT, latest_run_dir, make_run_dir
 from poursuite.probes import datajud as datajud_probe
 from poursuite.probes import esaj_inventory as esaj_inventory_probe
+from poursuite.probes import layer3_probe as layer3_probe_mod
+from poursuite.probes import phase3_probe as phase3_probe_mod
 from poursuite.probes import receita as receita_probe
 from poursuite.utils import setup_logging
 
@@ -57,6 +59,14 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Run Chrome headed (default: headless). Use for the 2-3-case "
                            "headless-detection sanity check.")
 
+    p_p3 = sub.add_parser("phase3", help="Phase 3 probe (eSAJ doc download + extract)")
+    p_p3.add_argument("--db-path", type=Path, default=None,
+                      help="Override snapshot DB path (default: SNAPSHOT_DIR/esaj_snapshots.db).")
+
+    p_l3 = sub.add_parser("layer3", help="Layer 3 probe (DataJud name-search quality)")
+    p_l3.add_argument("--date-window-days", type=int, default=730,
+                      help="dataAjuizamento window for 'definitely_same' classification (default 730 = 2y).")
+
     sub.add_parser("report", help="Consolidate latest probe runs into latest_report.md.")
 
     return parser
@@ -72,6 +82,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _run_receita(args)
     if args.cmd == "esaj":
         return _run_esaj(args)
+    if args.cmd == "phase3":
+        return _run_phase3(args)
+    if args.cmd == "layer3":
+        return _run_layer3(args)
     if args.cmd == "report":
         return _run_report()
     parser.print_help()
@@ -135,6 +149,24 @@ def _run_esaj(args: argparse.Namespace) -> int:
         logger.warning("Unfilled archetypes: %s",
                        ", ".join(summary["unfilled_archetypes"]))
     return 0 if summary.get("ok") else 1
+
+
+def _run_phase3(args: argparse.Namespace) -> int:
+    logger = setup_logging("poursuite.probes")
+    run_dir = make_run_dir("phase3_probe")
+    db_path = args.db_path or phase3_probe_mod.DEFAULT_DB_PATH
+    result = phase3_probe_mod.run(run_dir, logger, db_path=db_path)
+    logger.info("Phase 3 probe complete: %s", run_dir)
+    return 0 if result.get("ok") else 1
+
+
+def _run_layer3(args: argparse.Namespace) -> int:
+    logger = setup_logging("poursuite.probes")
+    run_dir = make_run_dir("layer3_probe")
+    result = layer3_probe_mod.run(run_dir, logger,
+                                  date_window_days=args.date_window_days)
+    logger.info("Layer 3 probe complete: %s", run_dir)
+    return 0 if result.get("ok") else 1
 
 
 def _run_receita(args: argparse.Namespace) -> int:
