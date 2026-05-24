@@ -43,7 +43,10 @@ _jobs_lock = threading.Lock()
 class ExtractStartRequest(BaseModel):
     process_numbers: List[str] = Field(..., min_length=1)
     concurrent: int = Field(default=DEFAULT_MAX_BROWSERS, ge=1, le=8)
-    include_other_processes: bool = False
+    # Default True so the field is populated in production. Triage filter on
+    # debtor's parallel-case count is too valuable to leave silently off.
+    # Operator can still disable per-request to skip the extra eSAJ round-trip.
+    include_other_processes: bool = True
     include_movimentos: bool = True  # Phase 2c: write-through to snapshot store
 
 

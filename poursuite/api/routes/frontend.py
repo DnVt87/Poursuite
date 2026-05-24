@@ -592,10 +592,10 @@ _LEGACY_HTML = r"""<!DOCTYPE html>
 
         <div class="form-group">
           <label class="checkbox-label" for="eIncludeOther">
-            <input type="checkbox" id="eIncludeOther">
+            <input type="checkbox" id="eIncludeOther" checked>
             Include defendant's process count
           </label>
-          <span class="hint">Makes an extra eSAJ request per process</span>
+          <span class="hint">Adds an extra eSAJ request per process; populates the parallel-case triage signal</span>
         </div>
 
       </div>
