@@ -7,6 +7,7 @@ from typing import List, Optional
 
 from poursuite.probes import PROBES_ROOT, latest_run_dir, make_run_dir
 from poursuite.probes import datajud as datajud_probe
+from poursuite.probes import datajud_inventory as datajud_inventory_probe
 from poursuite.probes import esaj_inventory as esaj_inventory_probe
 from poursuite.probes import layer3_probe as layer3_probe_mod
 from poursuite.probes import phase3_probe as phase3_probe_mod
@@ -67,6 +68,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_l3.add_argument("--date-window-days", type=int, default=730,
                       help="dataAjuizamento window for 'definitely_same' classification (default 730 = 2y).")
 
+    p_inv = sub.add_parser("inventory", help="DataJud capability re-inventory (canonical reference)")
+    p_inv.add_argument("--parts", nargs="+", default=None,
+                       help="Subset of parts to run (e.g. '1.1' '1.2'). Default: run incrementally as wired.")
+
     sub.add_parser("report", help="Consolidate latest probe runs into latest_report.md.")
 
     return parser
@@ -86,6 +91,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _run_phase3(args)
     if args.cmd == "layer3":
         return _run_layer3(args)
+    if args.cmd == "inventory":
+        return _run_inventory(args)
     if args.cmd == "report":
         return _run_report()
     parser.print_help()
@@ -166,6 +173,14 @@ def _run_layer3(args: argparse.Namespace) -> int:
     result = layer3_probe_mod.run(run_dir, logger,
                                   date_window_days=args.date_window_days)
     logger.info("Layer 3 probe complete: %s", run_dir)
+    return 0 if result.get("ok") else 1
+
+
+def _run_inventory(args: argparse.Namespace) -> int:
+    logger = setup_logging("poursuite.probes")
+    run_dir = make_run_dir("datajud_inventory")
+    result = datajud_inventory_probe.run(run_dir, logger, parts=args.parts)
+    logger.info("DataJud inventory probe complete: %s", run_dir)
     return 0 if result.get("ok") else 1
 
 
