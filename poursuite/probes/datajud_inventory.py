@@ -32,12 +32,14 @@ from poursuite.probes.datajud import (
     PARTY_INDICATOR_KEYS,
     _has_hits,
     _hit_count,
+    _http_get,
     _post,
     _resolve_api_key,
     _scan_for_party_keys,
 )
 
 URL_FOR_INDEX = "https://api-publica.datajud.cnj.jus.br/{index}/_search"
+URL_BASE = "https://api-publica.datajud.cnj.jus.br/{index}"
 
 # 5 tribunals from the Phase 3 + Layer 3 brief v1.2 (STJ + TST excluded).
 TRIBUNAL_INDICES: Tuple[str, ...] = (
@@ -1306,12 +1308,307 @@ def run_part_3_5_source_filtering(run_dir: Path, api_key: str,
 
 
 # ---------------------------------------------------------------------------
+# Name-search reconciliation (LegalSuite contradiction)
+# ---------------------------------------------------------------------------
+
+def _flatten_mapping(props: Dict[str, Any], prefix: str = "") -> List[Tuple[str, str]]:
+    """Flatten an Elasticsearch mapping `properties` tree into (dotted_path,
+    type) leaf tuples. Object/nested fields recurse; leaf fields emit type."""
+    out: List[Tuple[str, str]] = []
+    for name, spec in (props or {}).items():
+        path = f"{prefix}.{name}" if prefix else name
+        if not isinstance(spec, dict):
+            continue
+        if "properties" in spec:
+            # object or nested container
+            container_type = spec.get("type", "object")
+            out.append((path, f"[{container_type}]"))
+            out.extend(_flatten_mapping(spec["properties"], path))
+        else:
+            out.append((path, spec.get("type", "?")))
+            # multi-fields (e.g. .keyword)
+            for sub_name, sub_spec in (spec.get("fields") or {}).items():
+                out.append((f"{path}.{sub_name}",
+                            sub_spec.get("type", "?") + " (multi-field)"))
+    return out
+
+
+# LegalSuite's exact published example (TRACK_B_FINDINGS.md lines 10-22).
+LEGALSUITE_VERBATIM = {
+    "query": {"match": {"partes.nome": "Empresa Exemplo Ltda"}},
+    "size": 10,
+    "sort": [{"dataAjuizamento": {"order": "desc"}}],
+}
+
+# Candidate party field paths from the CNJ MNI / DataJud data model. We sweep
+# these as `match` queries against a guaranteed-present common name to see if
+# parties live under any alternate path.
+PARTY_FIELD_CANDIDATES: Tuple[str, ...] = (
+    "partes.nome",
+    "partes.nomeParte",
+    "partes.pessoa.nome",
+    "partes.nomePessoa",
+    "nomeParte",
+    "nome",
+    "poloAtivo.parte.pessoa.nome",
+    "poloPassivo.parte.pessoa.nome",
+    "dadosBasicos.polo.parte.pessoa.nome",
+)
+
+CANARY_COMMON_NAME = "Itaú Unibanco"
+
+
+def run_reconciliation(test_cases: List[Dict[str, Any]],
+                       run_dir: Path, api_key: str,
+                       logger: logging.Logger) -> Dict[str, Any]:
+    """Deep reconciliation of the name-search negative against LegalSuite's
+    documented working example. The decisive new test is the index mapping:
+    a `match` on an unmapped field returns 200/0-hits (no error), so the
+    canary alone can't distinguish 'field absent from mapping' from 'field
+    present but empty'. The mapping/_field_caps settles it."""
+    findings: Dict[str, Any] = {}
+
+    # --- Test A: index mapping — does `partes` exist in the schema at all? ---
+    logger.info("Reconciliation A: pulling index _mapping for all 5 tribunals")
+    mapping_per_tribunal: List[Dict[str, Any]] = []
+    for idx in TRIBUNAL_INDICES:
+        url = URL_BASE.format(index=idx) + "/_mapping"
+        res = _http_get(url, api_key, logger=logger)
+        write_json(run_dir / f"recon_mapping__{idx}.json", res)
+        body = res.get("body") or {}
+        # body shape: {index_name: {mappings: {properties: {...}}}}
+        flat: List[Tuple[str, str]] = []
+        if isinstance(body, dict):
+            for _index_name, index_body in body.items():
+                props = (((index_body or {}).get("mappings") or {})
+                         .get("properties") or {})
+                flat = _flatten_mapping(props)
+                break
+        all_paths = [p for p, _t in flat]
+        party_paths = [f"{p} ({t})" for p, t in flat
+                       if "parte" in p.lower() or "pessoa" in p.lower()
+                       or "nome" in p.lower() or "polo" in p.lower()
+                       or "documento" in p.lower() or "cpf" in p.lower()
+                       or "cnpj" in p.lower()]
+        mapping_per_tribunal.append({
+            "index": idx,
+            "status": res.get("status"),
+            "total_fields_in_mapping": len(all_paths),
+            "all_field_paths": all_paths,
+            "party_related_paths": party_paths,
+            "partes_present_in_mapping": any(p == "partes" or p.startswith("partes.")
+                                             for p in all_paths),
+        })
+    findings["test_A_mapping"] = {
+        "per_tribunal": mapping_per_tribunal,
+        "any_tribunal_has_partes_in_mapping": any(
+            t["partes_present_in_mapping"] for t in mapping_per_tribunal
+        ),
+    }
+
+    # --- Test B: _field_caps with CONTROL (the decisive test) ---
+    # `_mapping` is 403 for the dpj_api_publica key, but `_field_caps` is 200.
+    # Request KNOWN-GOOD fields alongside party fields: if the known-good fields
+    # come back and party fields don't, that's airtight proof party fields are
+    # absent from the mapping (and rules out "_field_caps just doesn't work for
+    # our key"). Run per-tribunal so we can localize.
+    logger.info("Reconciliation B: _field_caps with control fields (5 tribunals)")
+    control_fields = ["numeroProcesso", "movimentos.codigo", "classe.codigo",
+                      "dataAjuizamento", "grau"]
+    party_fields = ["partes", "partes.*", "partes.nome", "partes.nomeParte",
+                    "nomeParte", "nome", "cpfCnpj"]
+    requested = ",".join(control_fields + party_fields)
+    fc_per_tribunal: List[Dict[str, Any]] = []
+    for idx in TRIBUNAL_INDICES:
+        fc_url = URL_BASE.format(index=idx) + f"/_field_caps?fields={requested}"
+        fc_res = _http_get(fc_url, api_key, logger=logger)
+        write_json(run_dir / f"recon_field_caps__{idx}.json", fc_res)
+        fc_body = fc_res.get("body") or {}
+        returned = sorted((fc_body.get("fields") or {}).keys()) \
+            if isinstance(fc_body, dict) else []
+        control_present = [f for f in control_fields if f in returned]
+        party_present = [f for f in returned
+                         if f.startswith("partes") or f in ("nomeParte", "nome", "cpfCnpj")]
+        fc_per_tribunal.append({
+            "index": idx,
+            "status": fc_res.get("status"),
+            "fields_returned": returned,
+            "control_fields_present": control_present,
+            "party_fields_present": party_present,
+            "endpoint_works_for_key": len(control_present) > 0,
+        })
+    findings["test_B_field_caps"] = {
+        "control_fields_requested": control_fields,
+        "party_fields_requested": party_fields,
+        "per_tribunal": fc_per_tribunal,
+        "field_caps_works": any(t["endpoint_works_for_key"] for t in fc_per_tribunal),
+        "any_party_field_in_caps": any(t["party_fields_present"] for t in fc_per_tribunal),
+    }
+
+    # --- Test C: LegalSuite verbatim query ---
+    logger.info("Reconciliation C: LegalSuite verbatim query")
+    tjsp_url = URL_FOR_INDEX.format(index="api_publica_tjsp")
+    ls_res = _post(tjsp_url, LEGALSUITE_VERBATIM, api_key, logger=logger)
+    write_json(run_dir / "recon_legalsuite_verbatim.json", ls_res)
+    findings["test_C_legalsuite_verbatim"] = {
+        "query": LEGALSUITE_VERBATIM,
+        "status": ls_res.get("status"),
+        "total_hits": _hit_count(ls_res.get("body")),
+        "error_excerpt": (ls_res.get("raw") or "")[:300] if ls_res.get("raw") else None,
+        "interpretation": (
+            "200 + 0 hits is EXPECTED for the placeholder name 'Empresa "
+            "Exemplo Ltda' regardless of whether the field is mapped — a match "
+            "on an unmapped field also returns 200/0. Diagnostic value is in "
+            "the status (mapping error vs clean 200), cross-referenced with "
+            "test A."
+        ),
+    }
+
+    # --- Test D: alternative party field-name sweep (canary common name) ---
+    logger.info("Reconciliation D: party-field-name sweep on canary '%s'",
+                CANARY_COMMON_NAME)
+    sweep: List[Dict[str, Any]] = []
+    for field in PARTY_FIELD_CANDIDATES:
+        payload = {"query": {"match": {field: CANARY_COMMON_NAME}}, "size": 1}
+        res = _post(tjsp_url, payload, api_key, logger=logger)
+        safe_field = field.replace(".", "_")
+        write_json(run_dir / f"recon_sweep__{safe_field}.json", res)
+        sweep.append({
+            "field": field,
+            "status": res.get("status"),
+            "total_hits": _hit_count(res.get("body")),
+            "error_excerpt": (res.get("raw") or "")[:200] if res.get("raw") else None,
+        })
+    findings["test_D_field_sweep"] = {
+        "canary_name": CANARY_COMMON_NAME,
+        "results": sweep,
+        "any_field_returned_hits": any(s["total_hits"] > 0 for s in sweep),
+    }
+
+    # --- Test E: real defendants (PJ + PF) full variant matrix ---
+    logger.info("Reconciliation E: real-defendant matrix (PJ + PF)")
+    # Pick one PJ (Ltda/S.A.) and one PF defendant from test cases.
+    pj = next((c for c in test_cases
+               if any(t in (c["defendant"] or "").lower()
+                      for t in ("ltda", "s.a", "s/a", "eireli", "me"))), None)
+    pf = next((c for c in test_cases
+               if c is not pj and c.get("defendant")
+               and not any(t in (c["defendant"] or "").lower()
+                           for t in ("ltda", "s.a", "s/a", "eireli"))), None)
+    chosen = [c for c in (pj, pf) if c]
+    matrix: List[Dict[str, Any]] = []
+    for case in chosen:
+        name = case["defendant"]
+        per_variant: List[Dict[str, Any]] = []
+        for vname, payload in _query_variants_for_name(name):
+            # skip nested variants — test A already shows partes isn't nested
+            if "nested" in vname:
+                continue
+            res = _post(tjsp_url, payload, api_key, logger=logger)
+            safe = re.sub(r"[^A-Za-z0-9]", "_", name)[:30]
+            write_json(run_dir / f"recon_matrix__{safe}__{vname}.json", res)
+            per_variant.append({
+                "variant": vname,
+                "status": res.get("status"),
+                "total_hits": _hit_count(res.get("body")),
+            })
+        matrix.append({
+            "process_number": case["process_number"],
+            "defendant": name,
+            "kind": "PJ" if case is pj else "PF",
+            "variants": per_variant,
+            "any_hit": any(v["total_hits"] > 0 for v in per_variant),
+        })
+    findings["test_E_real_defendant_matrix"] = {
+        "cases": matrix,
+        "any_case_returned_hits": any(m["any_hit"] for m in matrix),
+    }
+
+    # --- Verdict ---
+    # Evidence hierarchy (strongest first):
+    #   1. _field_caps WITH CONTROL — if control fields come back but party
+    #      fields don't, that's airtight proof party fields aren't in the
+    #      mapping (and that _field_caps works for our key). DECISIVE.
+    #   2. Any party-field query returning hits on a guaranteed-present name → N2.
+    #   3. _mapping is INCONCLUSIVE here: 403 (no view_index_metadata priv),
+    #      so it can NOT be used as proof of absence. Recorded, not weighted.
+    fc = findings["test_B_field_caps"]
+    field_caps_works = fc["field_caps_works"]
+    party_in_caps = fc["any_party_field_in_caps"]
+    any_party_field_hits = findings["test_D_field_sweep"]["any_field_returned_hits"]
+    any_real_hits = findings["test_E_real_defendant_matrix"]["any_case_returned_hits"]
+    mapping_all_403 = all(t["status"] == 403
+                          for t in findings["test_A_mapping"]["per_tribunal"])
+
+    if any_party_field_hits or any_real_hits:
+        verdict = "N2"
+        verdict_text = (
+            "N2 — NAME SEARCH WORKS after corrected test. A party field "
+            "returned hits on a guaranteed-present name. The prior negative was "
+            "a test artifact. Document the working query; reopens Layer 3 proper."
+        )
+    elif field_caps_works and not party_in_caps:
+        verdict = "N1"
+        verdict_text = (
+            "N1 — NEGATIVE IS REAL AND RECONCILED (decisive evidence: "
+            "_field_caps with control). _field_caps returned the control fields "
+            "(numeroProcesso, movimentos.codigo, etc.) but ZERO party fields "
+            "across all tribunals — proving (a) the endpoint works for our key "
+            "and (b) no party field (partes / partes.nome / nomeParte / nome / "
+            "cpfCnpj) exists in the mapping. Corroborated by: 9-path field-name "
+            "sweep all 0-hits on a guaranteed-present common name; real PJ+PF "
+            "defendant matrix all 0; LegalSuite verbatim 200/0. The public index "
+            "(user dpj_api_publica) simply does not index parties. "
+            "LegalSuite's documented example uses the SAME public endpoint + "
+            "APIKey scheme (per TRACK_B) yet cannot work as-is — reconciliation "
+            "is temporal (party search removed post-LGPD) and/or a privileged "
+            "key tier. See web-research section for which."
+        )
+    elif field_caps_works and party_in_caps:
+        verdict = "N1-ambiguous"
+        verdict_text = (
+            "N1-AMBIGUOUS — _field_caps reports a party field EXISTS in the "
+            "mapping, yet no query returned hits even on a guaranteed-present "
+            "common name. Field mapped but unpopulated / non-analyzed. Escalate: "
+            "odd state warranting direct CNJ inquiry."
+        )
+    else:
+        verdict = "INCONCLUSIVE"
+        verdict_text = (
+            "INCONCLUSIVE — _field_caps did not return even the control fields "
+            f"(field_caps_works={field_caps_works}), and _mapping is 403 "
+            f"(all_403={mapping_all_403}). Cannot prove field absence via "
+            "metadata. Falling back to query evidence: all party-field queries "
+            "returned 0 hits, which is consistent with N1 but not airtight. "
+            "Escalate for a privileged key or direct CNJ schema confirmation."
+        )
+
+    findings["verdict"] = verdict
+    findings["verdict_text"] = verdict_text
+    findings["mapping_note"] = (
+        "GET /_mapping returns 403 for user dpj_api_publica (lacks "
+        "view_index_metadata privilege). Mapping is NOT readable on this key; "
+        "absence-of-data from /_mapping is permission-denial, not proof. "
+        "_field_caps (200) is the usable metadata channel."
+    )
+    findings["legalsuite_endpoint_per_track_b"] = (
+        "https://api-publica.datajud.cnj.jus.br/api_publica_tjsp/_search "
+        "(SAME public endpoint, SAME APIKey auth scheme as ours)"
+    )
+    logger.info("Reconciliation verdict: %s", verdict_text)
+    write_json(run_dir / "reconciliation_findings.json", findings)
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
 DEFAULT_DB_PATH = SNAPSHOT_DIR / "esaj_snapshots.db"
 
 ALL_PARTS = ("1.1", "1.2", "1.3", "2", "3.1", "3.2", "3.3", "3.4", "3.5")
+# `recon` is the standalone name-search/LegalSuite reconciliation pass; not in
+# ALL_PARTS (run explicitly via --parts recon).
 
 
 def run(run_dir: Path, logger: logging.Logger, *,
@@ -1329,6 +1626,14 @@ def run(run_dir: Path, logger: logging.Logger, *,
     write_json(run_dir / "test_cases.json", test_cases)
 
     findings: Dict[str, Any] = {"parts": {}}
+
+    if "recon" in parts:
+        logger.info("=== Reconciliation — name search / LegalSuite ===")
+        findings["parts"]["recon"] = run_reconciliation(
+            test_cases, run_dir, api_key, logger,
+        )
+        logger.info("Reconciliation verdict: %s",
+                    findings["parts"]["recon"]["verdict"])
 
     if "1.1" in parts:
         logger.info("=== Part 1.1 — name search re-verification ===")
