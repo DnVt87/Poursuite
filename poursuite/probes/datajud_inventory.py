@@ -2,8 +2,7 @@
 
 Canonical, empirically-verified reference for what the DataJud public API
 can and cannot do. Replaces patchwork understanding from prior probes
-(May 2026 datajud probe, May 2026 layer3 probe). See
-CLAUDE_CODE_BRIEF_DATAJUD_REINVENTORY.md.
+(May 2026 datajud probe, May 2026 layer3 probe).
 
 This module is investigation-only. It populates
 `docs/DATAJUD_CAPABILITY_INVENTORY.md` and saves raw artifacts under
@@ -1333,7 +1332,7 @@ def _flatten_mapping(props: Dict[str, Any], prefix: str = "") -> List[Tuple[str,
     return out
 
 
-# LegalSuite's exact published example (TRACK_B_FINDINGS.md lines 10-22).
+# LegalSuite's exact published example (see docs/DATAJUD_CAPABILITY_INVENTORY.md).
 LEGALSUITE_VERBATIM = {
     "query": {"match": {"partes.nome": "Empresa Exemplo Ltda"}},
     "size": 10,

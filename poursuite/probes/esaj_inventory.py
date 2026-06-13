@@ -7,7 +7,7 @@ badges, conditional renderings — without filtering by perceived utility.
 The goal is a comprehensive catalog the operator can review to decide what
 to add to the production scraper. This module makes no recommendations.
 
-Reference: CLAUDE_CODE_BRIEF_ESAJ_INVENTORY_v2.md (project root).
+Reference: eSAJ full-inventory pass (see ARCHITECTURE.md §10.4).
 """
 import json
 import logging
@@ -47,7 +47,7 @@ from poursuite.scraper.sections import (
 )
 
 
-# Authoritative mapping from CLAUDE_CODE_BRIEF_VIEWPORT_AND_RERUN.md §
+# Authoritative mapping from the eSAJ inventory viewport re-run pass,
 # "Section 7 reconciled gap list". Maps eSAJ raw header label → production
 # scraper field name. Labels NOT in this map are gaps (the production scraper
 # does not extract them). The brief lists this as ground truth — use it
@@ -707,7 +707,7 @@ def probe_one_case(driver: webdriver.Chrome, case: Dict[str, str],
 #
 # The previous run's auto-classifier over-tagged: empty Apensos sections were
 # read as "linked processes" because eSAJ renders a placeholder row when the
-# list is empty. Per CLAUDE_CODE_BRIEF_VIEWPORT_AND_RERUN.md, we now record
+# list is empty. Per the viewport re-run findings, we now record
 # raw observations and let the operator interpret. The archetype coverage
 # check uses DECLARED archetypes from the YAML, not inferred ones.
 # ---------------------------------------------------------------------------
@@ -1022,7 +1022,7 @@ def write_inventory_report(run_dir: Path, case_results: List[Dict[str, Any]],
         md.append(f"- `{f}`")
     md.append("")
     md.append("**Mapping from production field → eSAJ header label** "
-              "(per CLAUDE_CODE_BRIEF_VIEWPORT_AND_RERUN.md):")
+              "(per the eSAJ inventory viewport re-run pass):")
     for label, field in PRODUCTION_SCRAPER_LABEL_MAP.items():
         md.append(f"- `{field}` ← `{label}`")
     md.append("")
@@ -1088,7 +1088,7 @@ def write_inventory_report(run_dir: Path, case_results: List[Dict[str, Any]],
     md.append("")
     md.append("Coverage is by **declared** target archetype (from "
               "`esaj_inventory_samples.yaml`). The previous run's auto-classifier "
-              "was unreliable — see CLAUDE_CODE_BRIEF_VIEWPORT_AND_RERUN.md. "
+              "was unreliable. "
               "Each case's empirical observations are listed in Section 2 so "
               "the operator can verify whether a case actually fits the archetype "
               "it was declared as.")

@@ -1,6 +1,6 @@
 """Phase 3 probe — eSAJ document download + extraction quality.
 
-See CLAUDE_CODE_BRIEF_PHASE3_LAYER3_PROBE.md (v1.2). Investigates:
+See ARCHITECTURE.md §10.4 (Phase 3 probe). Investigates:
 
 - Can we download eSAJ documents from `cd_documento` references in the
   snapshot store? Authenticated vs. unauthenticated.
@@ -679,7 +679,7 @@ def write_report(run_dir: Path, step0: Dict[str, Any],
     md.append(f"_Run: `{run_dir.name}`  |  "
               f"Generated: {datetime.now(timezone.utc).isoformat()}_")
     md.append("")
-    md.append("Reference brief: `CLAUDE_CODE_BRIEF_PHASE3_LAYER3_PROBE.md` (v1.2)")
+    md.append("Reference: Phase 3 + Layer 3 combined probe (v1.2)")
     md.append("")
 
     md.append("## Dependency change")

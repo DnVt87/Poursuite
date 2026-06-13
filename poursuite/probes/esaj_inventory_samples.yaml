@@ -9,9 +9,9 @@
 #                     The walker captures empirical observations per case in Section 2 of
 #                     the report so the operator can verify whether the case actually fits.
 #                     The Archetype coverage check in the report uses these declarations
-#                     directly (no auto-classification — see CLAUDE_CODE_BRIEF_VIEWPORT_AND_RERUN.md).
+#                     directly (no auto-classification — see ARCHITECTURE.md §10.4).
 #
-# Conceptual archetypes (per CLAUDE_CODE_BRIEF_ESAJ_INVENTORY_v2.md §"Test set"):
+# Conceptual archetypes (eSAJ inventory test set):
 #   1. Execução de título extrajudicial
 #   2. Cumprimento de sentença
 #   3. Execução fiscal

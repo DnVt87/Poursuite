@@ -17,7 +17,7 @@ Five endpoints expose the data extracted in 2c/2d:
 
   POST /api/query
        Structured search over the snapshot store. Body shape documented
-       in poursuite/db/esaj_query.py and the PHASE2_NOTES.md design notes.
+       in poursuite/db/esaj_query.py (see ARCHITECTURE.md §13).
 """
 from __future__ import annotations
 

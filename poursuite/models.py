@@ -43,7 +43,7 @@ class ProcessData:
     plaintiff: Optional[str] = None
     defendant: Optional[str] = None
     other_processes: Optional[int] = None
-    # ── Phase 1 additions (see CLAUDE_CODE_BRIEF_VIEWPORT_AND_RERUN.md §7) ──
+    # ── Phase 1 additions (eSAJ header/derived fields; see ARCHITECTURE.md §4) ──
     # Scraped from the eSAJ header (Foro/Vara/Juiz in the primary panel;
     # the rest inside #maisDetalhes after the expand click).
     foro: Optional[str] = None

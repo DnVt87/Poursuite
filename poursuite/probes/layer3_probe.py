@@ -1,6 +1,6 @@
 """Layer 3 probe — DataJud name-search quality.
 
-See CLAUDE_CODE_BRIEF_PHASE3_LAYER3_PROBE.md (v1.2). Investigates:
+See ARCHITECTURE.md §10.4 (Layer 3 probe). Investigates:
 
 - What field do we query for *name search* in DataJud? (Step 0 discovery —
   party fields are returned stripped, but we don't yet know what to query.)
@@ -349,7 +349,7 @@ def write_report(run_dir: Path, step0: Dict[str, Any], liveness: Dict[str, Any],
     md.append(f"_Run: `{run_dir.name}`  |  "
               f"Generated: {datetime.now(timezone.utc).isoformat()}_")
     md.append("")
-    md.append("Reference brief: `CLAUDE_CODE_BRIEF_PHASE3_LAYER3_PROBE.md` (v1.2)")
+    md.append("Reference: Phase 3 + Layer 3 combined probe (v1.2)")
     md.append("")
 
     md.append("## Step 0 — name-search query field discovery")

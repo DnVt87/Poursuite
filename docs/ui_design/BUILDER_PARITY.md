@@ -44,7 +44,7 @@ The leaf editor in [renderLeaf()](../poursuite/api/routes/spa_v2.html) populates
 
 Notes:
 - `match` is explicitly absent from header fields — FTS5 only applies to `movimento.nome` and `movimento.complementos_text`. The op dropdown filter never offers `match` outside a `movimento_any` block.
-- Comparison ops (`<`, `<=`, `>`, `>=`) were deliberately suppressed on raw string fields (`initial_date`, `value`, `last_movement`) because lexicographic compare on `DD/MM/YYYY` and `R$ N.NNN,NN` is misleading. The brief's PHASE2_NOTES §3 documents this; the normalized v4 columns (`last_movement_iso`, `value_centavos`) cover the missing capability.
+- Comparison ops (`<`, `<=`, `>`, `>=`) were deliberately suppressed on raw string fields (`initial_date`, `value`, `last_movement`) because lexicographic compare on `DD/MM/YYYY` and `R$ N.NNN,NN` is misleading; the normalized v4 columns (`last_movement_iso`, `value_centavos`) cover the missing capability.
 
 ---
 
@@ -131,7 +131,7 @@ The `select` / `order_by` gap is the only true expressibility limitation in v1: 
 
 - `select` not editable via clicks. **Workaround:** edit JSON in "Modo avançado".
 - `order_by` not editable via clicks. **Workaround:** same.
-- Real custom DSL (vs. raw JSON) deferred to v2 — see Patch 3 of `CLAUDE_CODE_BRIEF_UI_IMPL_v2.md`.
+- Real custom DSL (vs. raw JSON) deferred to v2 (UI Phase 2.5 design decision).
 
 ## Audit complete
 

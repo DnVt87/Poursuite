@@ -110,7 +110,6 @@ maintenance/                      ← offline / operational scripts (orchestrate
 
 update_database.py                ← end-to-end pipeline orchestrator (top-level entry point)
 pyproject.toml                    ← build config & deps (Python ≥3.13)
-refactor_plan.md                  ← original 4-phase plan (largely executed; see §11)
 ```
 
 External directories (configured, not in repo): `D:/Poursuite/Databases` (live shards), `C:/Poursuite/Staging` (orchestrator working dir), `C:/Poursuite/CourtDocs` (downloaded PDFs), `C:/Poursuite/SearchResults`, `C:/Poursuite/eSAJ`, `C:/Poursuite/Logs`.
@@ -320,7 +319,7 @@ python -m poursuite.scraper.backfill_other_processes              # backfill all
 python -m poursuite.scraper.backfill_other_processes --max-cases 10 --concurrent 2
 ```
 
-Provenance: Track A investigation, May 2026 — see `CLAUDE_CODE_BRIEF_TRACK_A_OTHER_PROCESSES.md`. Background: 11 / 11 production snapshots had `other_processes` NULL because every layer of the call stack defaulted to False; the field worked correctly when invoked, just never invoked. F1 (default-flip) addresses future scrapes; this utility addresses already-persisted snapshots.
+Provenance: Track A investigation, May 2026. Background: 11 / 11 production snapshots had `other_processes` NULL because every layer of the call stack defaulted to False; the field worked correctly when invoked, just never invoked. F1 (default-flip) addresses future scrapes; this utility addresses already-persisted snapshots.
 
 ---
 
@@ -566,10 +565,6 @@ Probes use the methodology from [PLAN.md](PLAN.md) §11: verify before building,
 
 Excludes: `__pycache__/`, `*.py[cod]`, `*.egg-info/`, `dist/`, `build/`, `.venv/`, `venv/`, `.idea/`, `.vscode/`, `*.log`, `*.db`, `*.sqlite`, `*.sqlite3`, `.claude/`, `.DS_Store`, `Thumbs.db`. Real data and IDE artifacts stay out.
 
-### `refactor_plan.md`
-
-The codebase is largely the executed form of this plan. Phases 1–3 (package layout, config consolidation, unified CLI, archived legacy scripts) match the current state. Phase 4 (FastAPI + auth + pagination + timeout + streaming export) is also implemented — the plan is essentially executed. The document is now historical context; treat the code as authoritative when they disagree.
-
 ---
 
 ## 12. Cross-Cutting Concerns
@@ -651,7 +646,7 @@ All under `poursuite/api/routes/`, all using the existing `X-API-Key` middleware
 
 Group storage is a **JSON file** at `$POURSUITE_SNAPSHOT_DIR/process_groups.json`,
 managed by `poursuite/db/process_groups.py` (write-rename atomicity, per-instance
-`threading.Lock`). Per Patch 1 of `CLAUDE_CODE_BRIEF_UI_IMPL_v2.md`, the carteira
+`threading.Lock`). Per the UI Phase 2.5 design decision, the carteira
 is upload provenance — not a workspace — so a table would be over-built.
 
 ### 13.4 Aggregate semantics

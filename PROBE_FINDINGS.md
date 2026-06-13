@@ -391,4 +391,4 @@ The companion tool (separate brief, to be built under `poursuite/probes/`) shoul
 
 3. **Be reusable**: live under `poursuite/probes/` as a maintained diagnostic tool, not a throwaway script. When DataJud changes its key, when Receita's monthly format drifts, when we want to debug "why is this case showing strange data," the probe is what we re-run.
 
-The probe brief is in `CLAUDE_CODE_BRIEF_PROBE.md`.
+This probe was implemented under [`poursuite/probes/`](poursuite/probes/) — see its README and `ARCHITECTURE.md` §10.4.
