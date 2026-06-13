@@ -79,9 +79,13 @@ poursuite/                        ← installed package
 │   ├── connection.py             ← DatabaseManager (multi-shard discovery, conn pool)
 │   ├── search.py                 ← SearchEngine (FTS5 fanout, pagination, exclusion)
 │   ├── esaj_schema.sql           ← v1 baseline DDL for esaj_snapshots.db
-│   ├── esaj_snapshots.py         ← SnapshotStore + migrations v2 (cd_documento) / v3 (flags + saved_queries) / v4 (normalized columns)
+│   ├── esaj_snapshots.py         ← SnapshotStore + migrations v2 (cd_documento) / v3 (flags + saved_queries) / v4 (normalized columns) / v5 (DataJud enrichment)
 │   ├── esaj_query.py             ← build_query + synth_where_only (WHERE-tree synthesis)
 │   └── process_groups.py         ← ProcessGroupStore (JSON file, write-rename atomicity)
+├── datajud/                      ← DataJud public-API client + Layer 3-lite enrichment (production; no probes/ import)
+│   ├── client.py                ← batched _msearch (api-publica.datajud.cnj.jus.br), _source-projected, sequential
+│   ├── enrichment.py            ← EnrichmentRecord + DataJudEnricher (per-process isolation) + enrich_and_store (append-on-change)
+│   └── cli.py                   ← `python -m poursuite.datajud` (explicit / --group / --backfill-all / --from-shard)
 ├── probes/                       ← read-only diagnostics; nothing here is imported by api/db/scraper
 │   ├── __init__.py               ← PROBES_ROOT, make_run_dir, write_json/read_json helpers
 │   ├── cli.py                    ← `python -m poursuite.probes <subcommand>` (datajud / receita / esaj / phase3 / layer3 / report)
@@ -697,3 +701,58 @@ snapshot data from the DJE shards if disk pressure shifts.
 | Free up staging disk space | `python update_database.py cleanup-staging --year YYYY` after both halves of `YYYY` are published |
 | Run a diagnostic probe | `python -m poursuite.probes <subcommand>` — see §10.4 |
 | Backfill `other_processes` on old snapshots | `python -m poursuite.scraper.backfill_other_processes` — see §7.3 |
+| Enrich processes with DataJud (Layer 3-lite) | `python -m poursuite.datajud` — see §15 |
+
+---
+
+## 15. DataJud Enrichment Layer (Layer 3-lite)
+
+[`poursuite/datajud/`](poursuite/datajud/) enriches the snapshot store with
+structured DataJud fields for process numbers we already hold — the viable
+Layer 3 path the DataJud re-inventory uncovered (per-process, **no** party/name
+search). It is a **free-standing layer keyed by `process_number`** with no FK to
+`process_snapshot`, so any number can be enriched whether or not it has been
+scraped. Primitives were lifted out of [`probes/datajud.py`](poursuite/probes/datajud.py)
+so production never imports from `probes/`.
+
+### Package
+- [`client.py`](poursuite/datajud/client.py) — batched `_msearch` over
+  `api-publica.datajud.cnj.jus.br`, `_source`-projected to the target fields
+  (~90% payload cut). Defensive (returns a result dict, never raises).
+  **Sequential batches only** — the inventory's rate-limit caveat (~0.25 req/sec
+  single-threaded; parallel untested).
+- [`enrichment.py`](poursuite/datajud/enrichment.py) — `EnrichmentRecord` /
+  `Complemento`, a tolerant `dataHoraUltimaAtualizacao` parser (handles the
+  `.fff` vs `.ffffff` precision variance), `DataJudEnricher` (per-process error
+  isolation — a missing/bad number degrades to not-found, never aborts the
+  batch), and `enrich_and_store` (append-on-change write-through).
+- [`cli.py`](poursuite/datajud/cli.py) — `python -m poursuite.datajud`; one
+  source per run: explicit numbers, `--group <id>` (ProcessGroupStore),
+  `--backfill-all` (loaded snapshots with no enrichment yet), or
+  `--from-shard <path>` (un-curated DJE numbers). Plus `--dry-run` /
+  `--limit` / `--batch-size` / `--index`.
+
+### Storage (schema v5, additive)
+Two tables, append-on-change keyed by `(process_number, fetched_at)` — the same
+discipline as `process_snapshot`'s `(process_number, snapshot_ts)`:
+- **`datajud_enrichment`** — one row per fetch; `grau`, `assuntos_json`,
+  `codigo_municipio_ibge` (sparse — 0/8 populated in the L3L-a sample),
+  `data_hora_ultima_atualizacao` (raw + parsed ISO), counts, and the projected
+  `_source`. Dedup via `enrichment_hash`.
+- **`datajud_complemento`** — **every** `complementoTabelado` (full, not
+  outcome-filtered), each pinned to its movement *occurrence* via
+  `movimento_indice` + `movimento_data_hora`, so a repeated movement code (e.g.
+  multiple sentenças on appeal) attributes to the right instance. Indexed on
+  `(complemento_codigo, complemento_valor)` — the success/failure axis is
+  filterable in SQL, not buried in JSON.
+
+`valor` (monetary) is deliberately **not** sourced here — DataJud TJSP doesn't
+surface it; the eSAJ scraper stays the value source.
+
+### Field shapes (confirmed L3L-a) & coverage (L3L-e)
+`complementosTabelados` = `{codigo:int, valor:int, nome:str, descricao:str}`
+(100% populated, 1221 objects sampled); `assuntos` = `{codigo:int, nome:str}`;
+`grau` scalar str. **Measured DataJud index coverage ≈ 80%** of a random TJSP
+DJE portfolio (63/80) — ~1 in 5 process numbers is not in the public index. See
+[`docs/DATAJUD_CAPABILITY_INVENTORY.md`](docs/DATAJUD_CAPABILITY_INVENTORY.md) §6
+for the coverage figure and the random-rowid sampling methodology.

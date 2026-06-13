@@ -231,6 +231,27 @@ python -m poursuite.probes inventory --parts 1.1 2    # subset
 
 Each invocation creates `<POURSUITE_LOG_DIR>/probes/datajud_inventory_<ts>/` with one raw JSON per query plus per-part `findings.json` and a combined `all_findings.json`. Append-only; prior run dirs stay reviewable.
 
+### Layer 3-lite coverage + sampling note (L3L-e, June 2026)
+
+Layer 3-lite (per-process DataJud enrichment) shipped — see `ARCHITECTURE.md` §15.
+The end-to-end smoke measured **DataJud public-index coverage ≈ 80%** of a real
+TJSP portfolio: **63 / 80** process numbers drawn at random from the DJE corpus
+were present in the index (random-60: 49/60 = 82%; random-20: 14/20 = 70%),
+2018–2020-weighted. So **~1 in 5 numbers cannot be enriched** — they simply
+aren't in the public index. (A curated recent set hits ~100%, which *over*states
+a real portfolio; ~80% is the honest planning figure.)
+
+**Methodology trap — sample the optimized shards with random rowids, NOT
+`LIMIT`.** The frozen DJE shards are physically sorted by `process_number` (the
+`static_database_optimizer` rebuild). So `SELECT … LIMIT N`, natural-order
+scans, and even `SELECT DISTINCT … LIMIT N` all concentrate on the low-sequence
+`X00000X` tail — administrative / special-numbering cases DataJud indexes poorly
+— which depressed the first smoke draws to 65–70% and made *every* miss an
+`X000002` number. Random-rowid sampling (pick `rowid`s uniformly in
+`[1, MAX(rowid)]`, point-lookup each) is required for a representative draw; it's
+what `poursuite/datajud/cli.py --from-shard --limit` now does. Treat this as a
+general rule for any spot-check against an optimized shard.
+
 ---
 
 ## 7. Surprises and recommendations
