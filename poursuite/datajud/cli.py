@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sqlite3
 import sys
 from pathlib import Path
@@ -32,25 +33,39 @@ from poursuite.utils import setup_logging
 
 def _shard_process_numbers(shard_path: Path, limit: Optional[int]) -> List[str]:
     """Distinct process numbers from a DJE shard's `paragraphs` table — an
-    un-curated, portfolio-shaped source (no pre-selection for DataJud presence,
-    so the smoke's hit/miss rate is honest)."""
+    un-curated source.
+
+    Sampling caveat (learned in the L3L-e smoke): the optimized shards are
+    physically sorted by `process_number`, so any natural-order or `DISTINCT`
+    draw concentrates on the low-sequence `X00000X` tail — administrative /
+    special-numbering cases that DataJud indexes poorly, which skews a spot-
+    check's hit rate well below a real portfolio's. So:
+      - `--limit` set  → RANDOM-rowid sample (portfolio-shaped, honest rate);
+      - no `--limit`   → every distinct number (full backfill; order irrelevant).
+    """
     uri = f"file:{shard_path.as_posix()}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     try:
-        # Dedup in rowid (insertion) order, NOT via SQL DISTINCT: DISTINCT
-        # imposes a value ordering that surfaces the lexicographically-smallest
-        # = oldest oddball cases (1800s/1970s), which isn't portfolio-shaped.
-        # Rowid order follows the shard's gazette chronology — the active
-        # docket — so it's activity-weighted and representative. Stream and
-        # stop early so we don't scan the whole (large) table.
-        seen: List[str] = []
-        seen_set = set()
-        for (pn,) in conn.execute("SELECT process_number FROM paragraphs"):
-            if pn and pn not in seen_set:
-                seen_set.add(pn)
-                seen.append(pn)
-                if limit is not None and len(seen) >= limit:
-                    break
+        if limit is None:
+            seen: List[str] = []
+            seen_set = set()
+            for (pn,) in conn.execute("SELECT process_number FROM paragraphs"):
+                if pn and pn not in seen_set:
+                    seen_set.add(pn)
+                    seen.append(pn)
+            return seen
+        max_row = conn.execute("SELECT MAX(rowid) FROM paragraphs").fetchone()[0] or 0
+        seen, seen_set, tries = [], set(), 0
+        cap = limit * 40 + 200  # bounded so a sparse table can't loop forever
+        while len(seen) < limit and tries < cap:
+            tries += 1
+            row = conn.execute(
+                "SELECT process_number FROM paragraphs WHERE rowid = ?",
+                (random.randint(1, max_row),),
+            ).fetchone()
+            if row and row[0] and row[0] not in seen_set:
+                seen_set.add(row[0])
+                seen.append(row[0])
         return seen
     finally:
         conn.close()
