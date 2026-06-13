@@ -350,6 +350,8 @@ class SnapshotStore:
                     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
                     process_number        TEXT NOT NULL,
                     fetched_at            TEXT NOT NULL,
+                    movimento_indice      INTEGER,
+                    movimento_data_hora   TEXT,
                     movimento_codigo      INTEGER,
                     movimento_nome        TEXT,
                     complemento_codigo    INTEGER,
@@ -976,15 +978,18 @@ class SnapshotStore:
                     cur.executemany(
                         """
                         INSERT INTO datajud_complemento (
-                            process_number, fetched_at, movimento_codigo,
-                            movimento_nome, complemento_codigo, complemento_valor,
+                            process_number, fetched_at, movimento_indice,
+                            movimento_data_hora, movimento_codigo, movimento_nome,
+                            complemento_codigo, complemento_valor,
                             complemento_nome, complemento_descricao
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         [
                             (
                                 record.process_number,
                                 fetched_at,
+                                c.movimento_indice,
+                                c.movimento_data_hora,
                                 c.movimento_codigo,
                                 c.movimento_nome,
                                 c.codigo,

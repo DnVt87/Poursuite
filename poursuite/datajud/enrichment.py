@@ -42,13 +42,21 @@ SOURCE_INCLUDES: Sequence[str] = (
     "dataHoraUltimaAtualizacao",
     "movimentos.codigo",
     "movimentos.nome",
+    "movimentos.dataHora",
     "movimentos.complementosTabelados",
 )
 
 
 @dataclass
 class Complemento:
-    """One complementoTabelado, with its parent movement's code/name for context."""
+    """One complementoTabelado, with enough of its parent movement to pin it to a
+    specific occurrence — not just the code/name. `movimento_indice` (position in
+    the movimentos array) is the guaranteed-unique occurrence key within a
+    document; `movimento_data_hora` is the semantic one. Both are kept so a
+    repeated movement code (e.g. multiple sentenças on appeal) attributes its
+    complementos to the right instance."""
+    movimento_indice: Optional[int]
+    movimento_data_hora: Optional[str]
     movimento_codigo: Optional[int]
     movimento_nome: Optional[str]
     codigo: Optional[int]
@@ -78,9 +86,14 @@ class EnrichmentRecord:
 
         Includes dataHoraUltimaAtualizacao: a change there means DataJud
         re-ingested the case, which IS a meaningful enrichment to record."""
+        # Key on movimento_data_hora (content), not movimento_indice (wire
+        # position) — same reasoning the snapshot hash excludes `ordem`: a pure
+        # reorder shouldn't read as a change, but a new occurrence (new dataHora)
+        # should.
         comps = sorted(
             (
-                [c.movimento_codigo, c.codigo, c.valor, c.nome, c.descricao]
+                [c.movimento_data_hora, c.movimento_codigo,
+                 c.codigo, c.valor, c.nome, c.descricao]
                 for c in self.complementos
             ),
             key=lambda x: [("" if v is None else str(v)) for v in x],
@@ -145,12 +158,14 @@ def map_source_to_record(process_number: str, src: Dict[str, Any],
 
     complementos: List[Complemento] = []
     movimentos = src.get("movimentos") or []
-    for m in movimentos:
+    for idx, m in enumerate(movimentos):
         if not isinstance(m, dict):
             continue
         for ct in (m.get("complementosTabelados") or []):
             if isinstance(ct, dict):
                 complementos.append(Complemento(
+                    movimento_indice=idx,
+                    movimento_data_hora=m.get("dataHora"),
                     movimento_codigo=m.get("codigo"),
                     movimento_nome=m.get("nome"),
                     codigo=ct.get("codigo"),
