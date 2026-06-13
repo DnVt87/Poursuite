@@ -25,15 +25,18 @@ import threading
 from dataclasses import asdict, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from poursuite.config import SNAPSHOT_DIR
 from poursuite.models import ProcessData
 from poursuite.utils import setup_logging
 
+if TYPE_CHECKING:
+    from poursuite.datajud.enrichment import EnrichmentRecord
+
 SCHEMA_PATH = Path(__file__).parent / "esaj_schema.sql"
 DEFAULT_DB_PATH: Path = SNAPSHOT_DIR / "esaj_snapshots.db"
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 # Field names from ProcessData that map 1:1 to dedicated columns on
 # process_snapshot. Excludes `number` (becomes process_number) and
@@ -120,6 +123,14 @@ def compute_snapshot_hash(
         "linked": linked_canonical,
         "peticoes": peti_canonical,
     }
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def compute_enrichment_hash(payload: Any) -> str:
+    """SHA-256 over a canonical DataJud-enrichment payload — the diff key for
+    append-on-change. `payload` is the JSON-able structure returned by
+    `EnrichmentRecord.canonical_payload()`; canonicalization (sorted keys, no
+    whitespace) lives here so the store owns the one hashing convention."""
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 
@@ -290,6 +301,86 @@ class SnapshotStore:
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_process_snapshot_value_centavos "
                 "ON process_snapshot(value_centavos) WHERE value_centavos IS NOT NULL"
+            )
+            return
+        if version == 5:
+            # Layer 3-lite: DataJud per-process enrichment. Additive — new
+            # tables only, a separate DataJud-sourced layer that runs on its
+            # own cadence and never touches eSAJ-sourced columns. Append-on-
+            # change keyed by (process_number, fetched_at), mirroring the
+            # (process_number, snapshot_ts) discipline on process_snapshot.
+            # Safe to re-run (IF NOT EXISTS guards; SQLite has no transactional
+            # DDL, so each statement is independently idempotent).
+            #
+            # complementosTabelados is stored in FULL — every complemento, not
+            # just outcome-bearing ones (the L3L design fork). Filtering is a
+            # query-time concern, so (complemento_codigo, complemento_valor) is
+            # indexed for the success/failure axis.
+            #
+            # Shapes confirmed empirically in L3L-a (8/8 indexed cases):
+            #   complementosTabelados {codigo:int, valor:int, nome:str,
+            #     descricao:str}, 100% populated, 1221 objects sampled;
+            #   assuntos {codigo:int, nome:str}; grau scalar str ("G1" in
+            #   sample); codigoMunicipioIBGE sparse int (0/8 populated);
+            #   dataHoraUltimaAtualizacao ISO-8601 str, variable fractional
+            #   precision (.fff vs .ffffff) — parsed into the _iso column.
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS datajud_enrichment (
+                    process_number                   TEXT NOT NULL,
+                    fetched_at                       TEXT NOT NULL,
+                    enrichment_hash                  TEXT NOT NULL,
+                    datajud_found                    INTEGER NOT NULL,
+                    tribunal                         TEXT,
+                    grau                             TEXT,
+                    assuntos_json                    TEXT,
+                    codigo_municipio_ibge            INTEGER,
+                    data_hora_ultima_atualizacao     TEXT,
+                    data_hora_ultima_atualizacao_iso TEXT,
+                    movimentos_count                 INTEGER,
+                    complementos_count               INTEGER,
+                    raw_source_json                  TEXT,
+                    PRIMARY KEY (process_number, fetched_at)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS datajud_complemento (
+                    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                    process_number        TEXT NOT NULL,
+                    fetched_at            TEXT NOT NULL,
+                    movimento_codigo      INTEGER,
+                    movimento_nome        TEXT,
+                    complemento_codigo    INTEGER,
+                    complemento_valor     INTEGER,
+                    complemento_nome      TEXT,
+                    complemento_descricao TEXT,
+                    FOREIGN KEY (process_number, fetched_at)
+                        REFERENCES datajud_enrichment (process_number, fetched_at)
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_datajud_complemento_proc "
+                "ON datajud_complemento(process_number, fetched_at)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_datajud_complemento_codigo_valor "
+                "ON datajud_complemento(complemento_codigo, complemento_valor)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_datajud_complemento_mov_codigo "
+                "ON datajud_complemento(movimento_codigo)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_datajud_enrichment_grau "
+                "ON datajud_enrichment(grau) WHERE grau IS NOT NULL"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_datajud_enrichment_ibge "
+                "ON datajud_enrichment(codigo_municipio_ibge) "
+                "WHERE codigo_municipio_ibge IS NOT NULL"
             )
             return
         raise RuntimeError(f"Unknown migration version: {version}")
@@ -809,6 +900,159 @@ class SnapshotStore:
                 "snapshot_ts": ts, "age_days": age_days,
             })
         return results
+
+    # ─────────────────────────────────────────────────────────────────
+    # DataJud enrichment (Layer 3-lite)
+    # ─────────────────────────────────────────────────────────────────
+
+    def save_datajud_enrichment(self, record: "EnrichmentRecord") -> Dict[str, Any]:
+        """Append-on-change persist of a DataJud enrichment for one process.
+
+        Mirrors `save_snapshot`: hashes the enrichment payload; if it equals
+        the latest stored enrichment for the process, it's a no-op. Otherwise
+        a new (process_number, fetched_at) row is inserted plus its complemento
+        children, atomically. This is a DataJud-sourced layer — it never reads
+        or writes eSAJ-sourced columns.
+
+        Returns: {"inserted": bool, "fetched_at": str, "enrichment_hash": str,
+                  "reason": "first_enrichment" | "changed" | "unchanged"}
+        """
+        new_hash = compute_enrichment_hash(record.canonical_payload())
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "SELECT fetched_at, enrichment_hash FROM datajud_enrichment "
+                "WHERE process_number = ? ORDER BY fetched_at DESC LIMIT 1",
+                (record.process_number,),
+            )
+            latest = cur.fetchone()
+            if latest is not None and latest["enrichment_hash"] == new_hash:
+                self.logger.debug(
+                    "save_datajud_enrichment: unchanged for %s (hash %s)",
+                    record.process_number, new_hash[:12],
+                )
+                return {
+                    "inserted": False,
+                    "fetched_at": latest["fetched_at"],
+                    "enrichment_hash": new_hash,
+                    "reason": "unchanged",
+                }
+
+            fetched_at = _utc_now_iso()
+            if latest is not None and fetched_at <= latest["fetched_at"]:
+                fetched_at = _bump_microsecond(latest["fetched_at"])
+            assuntos_json = (
+                _canonical_json(record.assuntos)
+                if record.assuntos is not None else None
+            )
+            cur.execute("BEGIN")
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO datajud_enrichment (
+                        process_number, fetched_at, enrichment_hash, datajud_found,
+                        tribunal, grau, assuntos_json, codigo_municipio_ibge,
+                        data_hora_ultima_atualizacao, data_hora_ultima_atualizacao_iso,
+                        movimentos_count, complementos_count, raw_source_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.process_number,
+                        fetched_at,
+                        new_hash,
+                        1 if record.datajud_found else 0,
+                        record.tribunal,
+                        record.grau,
+                        assuntos_json,
+                        record.codigo_municipio_ibge,
+                        record.data_hora_ultima_atualizacao,
+                        record.data_hora_ultima_atualizacao_iso,
+                        record.movimentos_count,
+                        len(record.complementos),
+                        record.raw_source_json,
+                    ),
+                )
+                if record.complementos:
+                    cur.executemany(
+                        """
+                        INSERT INTO datajud_complemento (
+                            process_number, fetched_at, movimento_codigo,
+                            movimento_nome, complemento_codigo, complemento_valor,
+                            complemento_nome, complemento_descricao
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            (
+                                record.process_number,
+                                fetched_at,
+                                c.movimento_codigo,
+                                c.movimento_nome,
+                                c.codigo,
+                                c.valor,
+                                c.nome,
+                                c.descricao,
+                            )
+                            for c in record.complementos
+                        ],
+                    )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
+        return {
+            "inserted": True,
+            "fetched_at": fetched_at,
+            "enrichment_hash": new_hash,
+            "reason": "first_enrichment" if latest is None else "changed",
+        }
+
+    def get_latest_enrichment(self, process_number: str) -> Optional[Dict[str, Any]]:
+        """Most recent DataJud enrichment row for a process, or None."""
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT * FROM datajud_enrichment WHERE process_number = ? "
+            "ORDER BY fetched_at DESC LIMIT 1",
+            (process_number,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def get_complementos(
+        self, process_number: str, fetched_at: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """complementosTabelados rows for the given enrichment (latest if not
+        specified). Returns [] if the process has no enrichment."""
+        ts = fetched_at
+        if ts is None:
+            cur = self._conn.cursor()
+            cur.execute(
+                "SELECT MAX(fetched_at) FROM datajud_enrichment WHERE process_number = ?",
+                (process_number,),
+            )
+            row = cur.fetchone()
+            ts = row[0] if row and row[0] else None
+        if ts is None:
+            return []
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT * FROM datajud_complemento "
+            "WHERE process_number = ? AND fetched_at = ? "
+            "ORDER BY movimento_codigo, complemento_codigo, complemento_valor",
+            (process_number, ts),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def count_enrichments(self, process_number: Optional[str] = None) -> int:
+        cur = self._conn.cursor()
+        if process_number is None:
+            cur.execute("SELECT COUNT(*) FROM datajud_enrichment")
+        else:
+            cur.execute(
+                "SELECT COUNT(*) FROM datajud_enrichment WHERE process_number = ?",
+                (process_number,),
+            )
+        return int(cur.fetchone()[0])
 
     # ─────────────────────────────────────────────────────────────────
     # Lifecycle
