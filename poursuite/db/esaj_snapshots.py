@@ -1059,6 +1059,22 @@ class SnapshotStore:
             )
         return int(cur.fetchone()[0])
 
+    def list_unenriched_process_numbers(self, limit: Optional[int] = None) -> List[str]:
+        """Distinct loaded process numbers that have no DataJud enrichment yet —
+        the backfill universe for the Layer 3-lite CLI's --backfill-all mode.
+        Mirrors backfill_other_processes' 'loaded and missing' selection."""
+        sql = (
+            "SELECT DISTINCT process_number FROM process_snapshot "
+            "WHERE scrape_outcome = 'loaded' "
+            "AND process_number NOT IN (SELECT process_number FROM datajud_enrichment) "
+            "ORDER BY process_number"
+        )
+        if limit is not None:
+            sql += f" LIMIT {int(limit)}"
+        cur = self._conn.cursor()
+        cur.execute(sql)
+        return [r[0] for r in cur.fetchall()]
+
     # ─────────────────────────────────────────────────────────────────
     # Lifecycle
     # ─────────────────────────────────────────────────────────────────

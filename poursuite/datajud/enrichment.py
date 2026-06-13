@@ -19,7 +19,6 @@ import json
 import logging
 import re
 import sqlite3
-import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
@@ -331,14 +330,3 @@ def enrich_and_store(
     finally:
         if own_store:
             store.close()
-
-
-def main() -> None:
-    logger = setup_logging("datajud_enrichment")
-    pns = [a for a in sys.argv[1:] if not a.startswith("-")]
-    summary = enrich_and_store(process_numbers=pns or None, logger=logger)
-    print(json.dumps(summary, indent=2, ensure_ascii=False))
-
-
-if __name__ == "__main__":
-    main()
