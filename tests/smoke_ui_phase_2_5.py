@@ -103,7 +103,10 @@ def main() -> int:
 
     # Seed before starting the client so save_snapshot uses the right DB.
     store = snap_mod.SnapshotStore(tmpdir / "esaj_snapshots.db")
-    _check(store.schema_version() == 4, f"schema_version is {store.schema_version()}, want 4")
+    # Track CURRENT_SCHEMA_VERSION rather than a hard-coded number so schema
+    # bumps (v5 DataJud enrichment, and beyond) don't falsely fail this smoke.
+    _check(store.schema_version() == snap_mod.CURRENT_SCHEMA_VERSION,
+           f"schema_version is {store.schema_version()}, want {snap_mod.CURRENT_SCHEMA_VERSION}")
     _seed(store)
     store.close()
 
@@ -256,6 +259,17 @@ def main() -> int:
             {"movimento_any": {"field": "nome", "op": "match", "value": "penhora"}},
         ]}, "snapshot": "any"},
         {"where": {"field": "value_centavos", "op": ">=", "value": 1000000}},
+        # DataJud enrichment clauses (EU-a) — EXISTS, must synthesize; joins stays [].
+        {"where": {"enrichment": {"field": "grau", "op": "=", "value": "G1"}}},
+        {"where": {"complemento_any": {"and": [
+            {"field": "complemento_codigo", "op": "=", "value": 2},
+            {"field": "complemento_valor", "op": "=", "value": 2},
+        ]}}},
+        {"where": {"complemento_count": {"op": ">=", "value": 1}}},
+        {"where": {"and": [
+            {"field": "class_type", "op": "!=", "value": ""},
+            {"enrichment": {"field": "grau", "op": "in", "value": ["G1", "G2"]}},
+        ]}},
     ]
     for body in panel:
         b = build_query(body)
