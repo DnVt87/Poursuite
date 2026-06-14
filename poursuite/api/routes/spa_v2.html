@@ -460,6 +460,21 @@ const PETICAO_FIELDS = [
   { api: 'cd_documento',       label: 'Documento (eSAJ)',        type: 'text',       ops: ['=','!=','is_null','is_not_null'] },
 ];
 
+// DataJud enrichment (Layer 3-lite). Distinct from movimento.complementos_text
+// (eSAJ free-text); these are DataJud's structured complementosTabelados.
+// Filtered via EXISTS on the process's CURRENT enrichment (see esaj_query.py).
+const ENRICHMENT_FIELDS = [
+  { api: 'grau',               label: 'Grau (instância)',        type: 'text_enum', ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+];
+const COMPLEMENTO_FIELDS = [
+  { api: 'complemento_codigo',    label: 'Complemento (cód.)',      type: 'int',  ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'complemento_valor',     label: 'Complemento (valor)',     type: 'int',  ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'complemento_nome',      label: 'Complemento (nome)',      type: 'text', ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'complemento_descricao', label: 'Complemento (descrição)', type: 'text', ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'movimento_codigo',      label: 'Movimento (cód. TPU)',    type: 'int',  ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+  { api: 'movimento_nome',        label: 'Movimento (nome)',        type: 'text', ops: ['=','!=','in','not_in','is_null','is_not_null'] },
+];
+
 const OP_LABELS = {
   '=':           'igual a',
   '!=':          'diferente de',
@@ -566,6 +581,10 @@ const api = {
   getMovimentos:   (pn, since) => apiFetch(`/api/process/${encodeURIComponent(pn)}/movimentos${since ? '?since=' + encodeURIComponent(since) : ''}`),
   getLinks:        (pn) => apiFetch(`/api/process/${encodeURIComponent(pn)}/links`),
   getPeticoes:     (pn) => apiFetch(`/api/process/${encodeURIComponent(pn)}/peticoes`),
+  // Enrichment (DataJud, Layer 3-lite)
+  getEnrichment:   (pn) => apiFetch(`/api/process/${encodeURIComponent(pn)}/enrichment`),
+  enrichmentStatus:(process_numbers) => apiFetch('/api/enrichment_status', { method: 'POST', body: { process_numbers } }),
+  complementoCatalog: () => apiFetch('/api/datajud/complemento_catalog'),
   // Aggregates
   aggGroupBy:      (body) => apiFetch('/api/aggregates/group_by', { method: 'POST', body }),
   aggHistogram:    (body) => apiFetch('/api/aggregates/histogram', { method: 'POST', body }),
@@ -1531,6 +1550,17 @@ async function runQuery() {
     state.results.fields = state.builder.select.slice();
     state.results.age = startTs;
     state.results.error = null;
+    // Enrichment indicators (EU-c) — bulk lookup for the visible page. Best-effort.
+    state.results.enrich = {};
+    try {
+      const pns = r.results.map(x => x.process_number);
+      if (pns.length) {
+        const es = await api.enrichmentStatus(pns);
+        const map = {};
+        es.results.forEach(x => { map[x.process_number] = x; });
+        state.results.enrich = map;
+      }
+    } catch (_) { /* indicator is non-essential */ }
     if (r.total === 0 && body.where) {
       try {
         const ez = await api.explainZero(body);
@@ -1656,8 +1686,10 @@ function renderResultsTable(r) {
       el('a', { onclick: () => navigate('construtor') }, 'Voltar ao construtor →'));
   }
   const flagSet = state.flags;
+  const enrichMap = r.enrich || {};
   const tbl = el('table');
-  const head = el('tr', {}, el('th', { style: { width: '32px' } }, '★'));
+  const head = el('tr', {}, el('th', { style: { width: '32px' } }, '★'),
+    el('th', { style: { width: '88px' } }, 'DataJud'));
   r.fields.forEach(f => head.appendChild(el('th', {}, HEADER_LABEL[f] || f)));
   tbl.appendChild(el('thead', {}, head));
   const body = el('tbody');
@@ -1671,6 +1703,7 @@ function renderResultsTable(r) {
         onclick: () => toggleFlag(pn),
       }, flagSet.has(pn) ? '★' : '☆'),
     ));
+    tr.appendChild(el('td', {}, enrichPill(enrichMap[pn])));
     r.fields.forEach(f => {
       let v;
       if (f === 'process_number') {
@@ -1688,6 +1721,15 @@ function renderResultsTable(r) {
   });
   tbl.appendChild(body);
   return el('div', { class: 'table-wrap' }, tbl);
+}
+
+/* DataJud "enriquecido" indicator. enriched = a current enrichment row exists;
+   datajud_found = the case was actually in DataJud's index (a stored row with
+   found=0 means "checked, absent"). */
+function enrichPill(es) {
+  if (!es || !es.enriched) return '—';
+  if (es.datajud_found) return el('span', { class: 'pill good', title: 'No índice DataJud' }, 'enriquecido');
+  return el('span', { class: 'pill', title: 'Consultado; ausente do índice DataJud' }, 'sem dados');
 }
 
 async function toggleFlag(pn) {
@@ -1769,11 +1811,12 @@ async function renderDetalhe(host, args) {
     el('div', { id: 'detalhe-body' }, el('div', { class: 'empty' }, 'Carregando…')),
   ));
   try {
-    const [snaps, movs, links, peticoes] = await Promise.all([
+    const [snaps, movs, links, peticoes, enrich] = await Promise.all([
       api.listProcessSnapshots(pn),
       api.getMovimentos(pn),
       api.getLinks(pn),
       api.getPeticoes(pn),
+      api.getEnrichment(pn),
     ]);
     const body = $('#detalhe-body');
     clear(body);
@@ -1802,6 +1845,8 @@ async function renderDetalhe(host, args) {
           )),
       ),
     ));
+    // Enrichment (DataJud, Layer 3-lite)
+    body.appendChild(renderEnrichmentCard(enrich));
     // Snapshots
     body.appendChild(el('div', { class: 'card' },
       el('h3', {}, `Histórico (${snaps.results.length} snapshot${snaps.results.length === 1 ? '' : 's'})`),
@@ -1854,6 +1899,72 @@ async function renderDetalhe(host, args) {
   } catch (e) {
     $('#detalhe-body').appendChild(el('div', { class: 'banner bad' }, e.message));
   }
+}
+
+/* Enrichment card for Detalhe. `enrich` is the /api/process/{pn}/enrichment
+   payload: { enrichment: <row|null>, complementos: [...] }. Complementos are
+   grouped by their OWN DataJud movement occurrence (movimento_indice /
+   movimento_data_hora) — DataJud's movement array is a distinct source from the
+   eSAJ movimentos timeline above, so they're shown on their own DataJud
+   timeline rather than force-merged into the eSAJ one. */
+function renderEnrichmentCard(enrich) {
+  const e = enrich && enrich.enrichment;
+  if (!e) {
+    return el('div', { class: 'card' },
+      el('h3', {}, 'Enriquecimento DataJud'),
+      el('div', { class: 'empty' }, 'Sem enriquecimento para este processo. Rode python -m poursuite.datajud.'));
+  }
+  let assuntos = [];
+  try { assuntos = e.assuntos_json ? JSON.parse(e.assuntos_json) : []; } catch (_) {}
+  const card = el('div', { class: 'card' },
+    el('h3', {},
+      'Enriquecimento DataJud ',
+      e.datajud_found ? el('span', { class: 'pill good' }, 'no índice')
+                      : el('span', { class: 'pill bad' }, 'ausente do índice')),
+    el('div', { class: 'grid-2' },
+      el('div', {}, el('label', { class: 'field' }, 'Grau (instância)'), el('div', {}, e.grau || '—')),
+      el('div', {}, el('label', { class: 'field' }, 'Atualizado em (DataJud)'),
+        el('div', {}, e.data_hora_ultima_atualizacao
+          ? formatTS(e.data_hora_ultima_atualizacao_iso || e.data_hora_ultima_atualizacao) : '—')),
+      el('div', {}, el('label', { class: 'field' }, 'Município (IBGE)'),
+        el('div', {}, e.codigo_municipio_ibge != null ? String(e.codigo_municipio_ibge) : '—')),
+      el('div', {}, el('label', { class: 'field' }, 'Consultado em'), el('div', {}, formatTS(e.fetched_at))),
+    ),
+    assuntos.length ? el('div', { style: { marginTop: '10px' } },
+      el('label', { class: 'field' }, 'Assuntos (TPU)'),
+      el('div', {}, ...assuntos.map(a => el('span', { class: 'pill info', style: { marginRight: '6px' } },
+        `${a.codigo} · ${a.nome}`)))) : null,
+  );
+  const comps = (enrich.complementos || []);
+  if (comps.length) {
+    const groups = groupComplementos(comps);
+    card.appendChild(el('div', { style: { marginTop: '12px' } },
+      el('label', { class: 'field' }, `Complementos tabelados (${comps.length}) — por movimento DataJud`),
+      el('div', { class: 'timeline' }, ...groups.map(g => el('div', { class: 'timeline-item' },
+        el('div', { class: 'date' }, g.data_hora ? formatISODate(g.data_hora) : '—'),
+        el('div', { class: 'name' }, `${g.movimento_codigo != null ? g.movimento_codigo : '—'} · ${g.movimento_nome || ''}`),
+        el('div', { class: 'compl' }, ...g.items.map(ct => el('div', {},
+          el('span', { class: 'mono' }, `(${ct.complemento_codigo}, ${ct.complemento_valor})`), ' ',
+          ct.complemento_nome || '',
+          ct.complemento_descricao ? el('span', { style: { color: 'var(--muted)' } }, ` — ${ct.complemento_descricao}`) : null,
+        ))),
+      ))),
+    ));
+  }
+  return card;
+}
+
+function groupComplementos(comps) {
+  const map = new Map();
+  comps.forEach(ct => {
+    const key = `${ct.movimento_indice}|${ct.movimento_codigo}`;
+    if (!map.has(key)) map.set(key, {
+      movimento_indice: ct.movimento_indice, movimento_codigo: ct.movimento_codigo,
+      movimento_nome: ct.movimento_nome, data_hora: ct.movimento_data_hora, items: [],
+    });
+    map.get(key).items.push(ct);
+  });
+  return [...map.values()].sort((a, b) => (a.movimento_indice ?? 0) - (b.movimento_indice ?? 0));
 }
 
 function renderSimpleTable(rows, cols) {
@@ -2007,15 +2118,27 @@ function renderEsquema(host) {
       'Usados dentro de "Existe movimentação". O operador busca FTS5 (match) só é válido em "nome" e "complementos_text".'),
     block('linked_process', LINKED_FIELDS),
     block('peticao', PETICAO_FIELDS),
+    block('Enriquecimento DataJud — filtrável', ENRICHMENT_FIELDS,
+      'Campos estruturados do DataJud (Layer 3-lite). NÃO confundir com "complementos" do eSAJ (texto livre em movimento). v1 filtrável: grau. assuntos / município IBGE / atualização são apenas exibidos no Detalhe.'),
+    block('Complemento DataJud — dentro de "Existe complemento"', COMPLEMENTO_FIELDS,
+      'O eixo êxito/insucesso: (complemento_codigo, complemento_valor) identificam o desfecho tabelado. Estes são os complementosTabelados do DataJud, distintos do complementos_text do eSAJ.'),
+    el('div', { class: 'card' },
+      el('h3', {}, 'Catálogo de complementos (DataJud)'),
+      el('p', { style: { color: 'var(--muted)', fontSize: '0.82rem', marginBottom: '10px' } },
+        'Tuplas distintas presentes nos enriquecimentos atuais, agrupadas por movimento — para mapear quais (código, valor) significam quais desfechos.'),
+      el('div', { id: 'complemento-catalog' }, el('div', { class: 'empty' }, 'Carregando catálogo…')),
+    ),
     el('div', { class: 'card' },
       el('h3', {}, 'Meta-operadores e modificadores'),
       el('div', { class: 'grid-2' },
         el('div', {},
           el('strong', {}, 'Composição: '), el('code', {}, 'and'), ', ', el('code', {}, 'or'), ', ', el('code', {}, 'not'),
           el('br'),
-          el('strong', {}, 'Sub-cláusulas EXISTS: '), el('code', {}, 'movimento_any'), ', ', el('code', {}, 'linked_any'), ', ', el('code', {}, 'peticao_any'),
+          el('strong', {}, 'Sub-cláusulas EXISTS: '), el('code', {}, 'movimento_any'), ', ', el('code', {}, 'linked_any'), ', ', el('code', {}, 'peticao_any'), ', ', el('code', {}, 'complemento_any'),
           el('br'),
-          el('strong', {}, 'Contagem: '), el('code', {}, 'movimento_count'), ', ', el('code', {}, 'linked_count'), ', ', el('code', {}, 'peticao_count'),
+          el('strong', {}, 'Enriquecimento (1 linha atual): '), el('code', {}, 'enrichment'),
+          el('br'),
+          el('strong', {}, 'Contagem: '), el('code', {}, 'movimento_count'), ', ', el('code', {}, 'linked_count'), ', ', el('code', {}, 'peticao_count'), ', ', el('code', {}, 'complemento_count'),
         ),
         el('div', {},
           el('strong', {}, 'Snapshot temporal:'),
@@ -2029,6 +2152,48 @@ function renderEsquema(host) {
       ),
     ),
   ));
+  loadComplementoCatalog();
+}
+
+async function loadComplementoCatalog() {
+  const host = $('#complemento-catalog');
+  if (!host) return;
+  try {
+    const r = await api.complementoCatalog();
+    clear(host);
+    if (!r.results.length) {
+      host.appendChild(el('div', { class: 'empty' },
+        'Nenhum complemento ainda. Rode python -m poursuite.datajud para enriquecer processos.'));
+      return;
+    }
+    const byMov = new Map();
+    r.results.forEach(t => {
+      const k = `${t.movimento_codigo}|${t.movimento_nome}`;
+      if (!byMov.has(k)) byMov.set(k, { codigo: t.movimento_codigo, nome: t.movimento_nome, items: [] });
+      byMov.get(k).items.push(t);
+    });
+    [...byMov.values()].forEach(g => {
+      host.appendChild(el('div', { style: { marginBottom: '14px' } },
+        el('div', { style: { fontWeight: '600', marginBottom: '4px' } },
+          `Movimento ${g.codigo != null ? g.codigo : '—'} · ${g.nome || ''}`),
+        el('div', { class: 'table-wrap' }, el('table', {},
+          el('thead', {}, el('tr', {},
+            el('th', {}, 'cód.'), el('th', {}, 'valor'), el('th', {}, 'nome'),
+            el('th', {}, 'descrição'), el('th', {}, 'processos'))),
+          el('tbody', {}, ...g.items.map(t => el('tr', {},
+            el('td', { class: 'mono' }, String(t.complemento_codigo)),
+            el('td', { class: 'mono' }, String(t.complemento_valor)),
+            el('td', {}, t.complemento_nome || '—'),
+            el('td', { style: { color: 'var(--muted)' } }, t.complemento_descricao || '—'),
+            el('td', {}, String(t.process_count)),
+          ))),
+        )),
+      ));
+    });
+  } catch (e) {
+    clear(host);
+    host.appendChild(el('div', { class: 'banner bad' }, e.message));
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════════

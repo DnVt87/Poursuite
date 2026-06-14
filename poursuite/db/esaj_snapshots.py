@@ -1075,6 +1075,82 @@ class SnapshotStore:
         cur.execute(sql)
         return [r[0] for r in cur.fetchall()]
 
+    def complemento_catalog(self) -> List[Dict[str, Any]]:
+        """Distinct complemento tuples present across all CURRENT enrichments,
+        with the parent movement code/name and occurrence/process counts.
+
+        This is the EU-b catalog: what outcome codes actually exist, grouped by
+        movement, so the operator can tell us which `(movimento_codigo,
+        complemento_codigo, complemento_valor)` tuples mean what. Scoped to each
+        process's latest fetched_at (superseded enrichments excluded)."""
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            WITH current AS (
+              SELECT process_number, MAX(fetched_at) AS fetched_at
+              FROM datajud_enrichment GROUP BY process_number
+            )
+            SELECT dc.movimento_codigo, dc.movimento_nome,
+                   dc.complemento_codigo, dc.complemento_valor,
+                   dc.complemento_nome, dc.complemento_descricao,
+                   COUNT(*) AS occurrences,
+                   COUNT(DISTINCT dc.process_number) AS process_count
+            FROM datajud_complemento dc
+            JOIN current c
+              ON c.process_number = dc.process_number
+             AND c.fetched_at = dc.fetched_at
+            GROUP BY dc.movimento_codigo, dc.movimento_nome,
+                     dc.complemento_codigo, dc.complemento_valor,
+                     dc.complemento_nome, dc.complemento_descricao
+            ORDER BY dc.movimento_codigo, dc.complemento_codigo, dc.complemento_valor
+            """
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def enrichment_status(self, process_numbers: List[str]) -> List[Dict[str, Any]]:
+        """Bulk "which of these have a current DataJud enrichment" — the
+        Resultados "enriquecido" indicator. Chunked `IN` like snapshot_status.
+
+        Per process: `enriched` (an enrichment row exists), `datajud_found` (the
+        case was actually in DataJud's index — a stored row with found=0 means
+        "checked, absent"), and the freshness `fetched_at`."""
+        if not process_numbers:
+            return []
+        latest: Dict[str, Dict[str, Any]] = {}
+        chunk = 1000
+        cur = self._conn.cursor()
+        for i in range(0, len(process_numbers), chunk):
+            sub = process_numbers[i : i + chunk]
+            placeholders = ",".join("?" * len(sub))
+            cur.execute(
+                f"""
+                SELECT e.process_number, e.fetched_at, e.datajud_found
+                FROM datajud_enrichment e
+                JOIN (
+                  SELECT process_number, MAX(fetched_at) AS ts
+                  FROM datajud_enrichment
+                  WHERE process_number IN ({placeholders})
+                  GROUP BY process_number
+                ) m ON m.process_number = e.process_number AND m.ts = e.fetched_at
+                """,
+                sub,
+            )
+            for row in cur.fetchall():
+                latest[row["process_number"]] = {
+                    "fetched_at": row["fetched_at"],
+                    "datajud_found": bool(row["datajud_found"]),
+                }
+        out: List[Dict[str, Any]] = []
+        for pn in process_numbers:
+            row = latest.get(pn)
+            out.append({
+                "process_number": pn,
+                "enriched": row is not None,
+                "datajud_found": row["datajud_found"] if row else False,
+                "fetched_at": row["fetched_at"] if row else None,
+            })
+        return out
+
     # ─────────────────────────────────────────────────────────────────
     # Lifecycle
     # ─────────────────────────────────────────────────────────────────
