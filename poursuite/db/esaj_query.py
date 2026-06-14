@@ -332,7 +332,16 @@ def _synth_enrichment(inner: Dict[str, Any], ctx: _Ctx) -> str:
 
     A process with no enrichment fails EXISTS, so enrichment filters match only
     enriched processes (v1 semantic — `grau != "G1"` excludes un-enriched; see
-    UI_DESIGN_NOTES.md)."""
+    UI_DESIGN_NOTES.md).
+
+    `inner` goes through `_synth_child_clause`, which already accepts BOTH a
+    single `{field, op, value}` leaf AND a full `and`/`or`/`not` tree. In v1
+    `grau` is the only filterable enrichment field, so callers (and the visual
+    builder, EU-d) pass a single predicate — but that's a UI simplification, not
+    a parser limit. If `codigo_municipio_ibge` / freshness graduate from
+    display-only to filterable, add them to ENRICHMENT_FIELDS and let the builder
+    emit a tree; nothing changes here. Don't bake single-predicate into the
+    builder as if it were permanent."""
     inner_sql = _synth_child_clause(inner, allowed=ENRICHMENT_FIELDS, alias="de", ctx=ctx)
     return (
         "EXISTS (SELECT 1 FROM datajud_enrichment de "
