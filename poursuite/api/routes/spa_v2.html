@@ -1319,6 +1319,15 @@ function renderNode(node, parent, key) {
       el('button', { class: 'btn ghost small', onclick: () => {
         children.push({ peticao_count: { op: '>=', value: 1 } }); render();
       } }, '＋ Contagem petições'),
+      el('button', { class: 'btn ghost small', onclick: () => {
+        children.push({ enrichment: { field: 'grau', op: '=', value: 'G1' } }); render();
+      } }, '＋ Enriquecimento (DataJud)'),
+      el('button', { class: 'btn ghost small', onclick: () => {
+        children.push({ complemento_any: { field: 'complemento_codigo', op: '=', value: '' } }); render();
+      } }, '＋ Existe complemento (DataJud)'),
+      el('button', { class: 'btn ghost small', onclick: () => {
+        children.push({ complemento_count: { op: '>=', value: 1 } }); render();
+      } }, '＋ Contagem complementos'),
     ));
     return wrap;
   }
@@ -1338,29 +1347,31 @@ function renderNode(node, parent, key) {
     );
   }
 
-  // *_any sub-clauses
-  for (const k of ['movimento_any', 'linked_any', 'peticao_any']) {
+  // *_any sub-clauses (+ enrichment, a 1:1 predicate on the current DataJud row)
+  const CHILD_KINDS = {
+    movimento_any:   { fields: MOVIMENTO_FIELDS,   fts: true,  label: 'EXISTE MOVIMENTAÇÃO' },
+    linked_any:      { fields: LINKED_FIELDS,      fts: false, label: 'EXISTE VINCULADO' },
+    peticao_any:     { fields: PETICAO_FIELDS,     fts: false, label: 'EXISTE PETIÇÃO' },
+    complemento_any: { fields: COMPLEMENTO_FIELDS, fts: false, label: 'EXISTE COMPLEMENTO (DATAJUD)' },
+    enrichment:      { fields: ENRICHMENT_FIELDS,  fts: false, label: 'ENRIQUECIMENTO (DATAJUD)' },
+  };
+  for (const k in CHILD_KINDS) {
     if (node && node[k]) {
-      const allowed = k === 'movimento_any' ? MOVIMENTO_FIELDS
-                    : k === 'linked_any'    ? LINKED_FIELDS
-                                            : PETICAO_FIELDS;
-      const fts = (k === 'movimento_any');
+      const { fields, fts, label } = CHILD_KINDS[k];
       return el('div', { class: 'clause' },
         el('div', { class: 'clause-header' },
-          el('span', { class: 'kind' }, k === 'movimento_any' ? 'EXISTE MOVIMENTAÇÃO'
-                                       : k === 'linked_any'    ? 'EXISTE VINCULADO'
-                                                              : 'EXISTE PETIÇÃO'),
+          el('span', { class: 'kind' }, label),
           el('button', { class: 'delete', onclick: () => { removeFromParent(parent, key); render(); } }, '✕'),
         ),
         el('div', { class: 'clause-children' },
-          renderChildNode(node[k], node, k, allowed, fts),
+          renderChildNode(node[k], node, k, fields, fts),
         ),
       );
     }
   }
 
   // *_count
-  for (const k of ['movimento_count', 'linked_count', 'peticao_count']) {
+  for (const k of ['movimento_count', 'linked_count', 'peticao_count', 'complemento_count']) {
     if (node && node[k]) {
       return renderCountClause(node, parent, key, k);
     }
@@ -1472,7 +1483,8 @@ function renderCountClause(node, parent, key, kind) {
   const spec = node[kind];
   const label = { movimento_count: 'Qtd. movimentações',
                   linked_count: 'Qtd. vinculados',
-                  peticao_count: 'Qtd. petições' }[kind];
+                  peticao_count: 'Qtd. petições',
+                  complemento_count: 'Qtd. complementos (DataJud)' }[kind];
   return el('div', { class: 'clause' },
     el('div', { class: 'clause-row' },
       el('span', { class: 'kind' }, label),

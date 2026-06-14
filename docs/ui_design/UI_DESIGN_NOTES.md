@@ -475,6 +475,34 @@ compared sensibly.
   keeps running — fine at current query times).
 - A real custom DSL (Q1) if JSON-textarea usage becomes regular.
 
+### 8.5 Layer 3-lite enrichment surfacing (enrichment-ui)
+
+DataJud per-process enrichment (schema v5: `datajud_enrichment` +
+`datajud_complemento`) is exposed in the query API (`enrichment` /
+`complemento_any` / `complemento_count`), the schema browser (enrichment fields +
+a complemento catalog), and the case detail. Two v1 limitations are deliberate:
+
+- **The query universe stays snapshot-based.** Enrichment is free-standing
+  (keyed by `process_number`, no FK to `process_snapshot`), but the builder still
+  selects from `process_snapshot`. Enrichment augments those rows via EXISTS — it
+  filters and displays, but a process that is enriched yet has **no snapshot does
+  not appear** in query results. Acceptable: the lawyer works from
+  carteiras/snapshots. An "enrichment-only universe" is a future question.
+- **Enrichment filters match only enriched processes.** `grau` /
+  `complemento_any` / `complemento_count` are EXISTS against the process's
+  **current** enrichment, so a process with no current enrichment fails the
+  predicate — e.g. `grau != "G1"` excludes un-enriched processes (it is *not*
+  "anything that isn't G1"). Compose with `not` at the clause boundary for "not
+  enriched".
+
+Also v1: `assuntos` / `codigo_municipio_ibge` / `dataHoraUltimaAtualizacao` are
+display-only (Detalhe), not filters; no curated favorable/unfavorable
+interpretation of complemento tuples (that mapping is harvested from the lawyer
+via the catalog); enrichment runs from the CLI (`python -m poursuite.datajud`),
+no UI trigger yet. DataJud complementos render on their **own** movement timeline
+in Detalhe (their `movimento_indice`/`data_hora` reference DataJud's movement
+array, a distinct source from the eSAJ movimentos), not merged into the eSAJ one.
+
 ---
 
 ## 9. How to review
