@@ -103,7 +103,10 @@ def main() -> int:
 
     # Seed before starting the client so save_snapshot uses the right DB.
     store = snap_mod.SnapshotStore(tmpdir / "esaj_snapshots.db")
-    _check(store.schema_version() == 4, f"schema_version is {store.schema_version()}, want 4")
+    # Track CURRENT_SCHEMA_VERSION rather than a hard-coded number so schema
+    # bumps (v5 DataJud enrichment, and beyond) don't falsely fail this smoke.
+    _check(store.schema_version() == snap_mod.CURRENT_SCHEMA_VERSION,
+           f"schema_version is {store.schema_version()}, want {snap_mod.CURRENT_SCHEMA_VERSION}")
     _seed(store)
     store.close()
 
