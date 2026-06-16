@@ -71,6 +71,8 @@ def main() -> int:
                          "where": {"field": "class_type", "op": "is_not_null"}})
             store.get_latest_enrichment(PN)
             store.get_complementos(PN)
+            store.complemento_catalog()
+            store.enrichment_status([PN, "0" * 20])
             store.snapshot_status([PN, "0" * 20])
 
     with ThreadPoolExecutor(max_workers=THREADS) as ex:

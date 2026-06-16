@@ -1106,29 +1106,30 @@ class SnapshotStore:
         movement, so the operator can tell us which `(movimento_codigo,
         complemento_codigo, complemento_valor)` tuples mean what. Scoped to each
         process's latest fetched_at (superseded enrichments excluded)."""
-        cur = self._conn.cursor()
-        cur.execute(
-            """
-            WITH current AS (
-              SELECT process_number, MAX(fetched_at) AS fetched_at
-              FROM datajud_enrichment GROUP BY process_number
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                """
+                WITH current AS (
+                  SELECT process_number, MAX(fetched_at) AS fetched_at
+                  FROM datajud_enrichment GROUP BY process_number
+                )
+                SELECT dc.movimento_codigo, dc.movimento_nome,
+                       dc.complemento_codigo, dc.complemento_valor,
+                       dc.complemento_nome, dc.complemento_descricao,
+                       COUNT(*) AS occurrences,
+                       COUNT(DISTINCT dc.process_number) AS process_count
+                FROM datajud_complemento dc
+                JOIN current c
+                  ON c.process_number = dc.process_number
+                 AND c.fetched_at = dc.fetched_at
+                GROUP BY dc.movimento_codigo, dc.movimento_nome,
+                         dc.complemento_codigo, dc.complemento_valor,
+                         dc.complemento_nome, dc.complemento_descricao
+                ORDER BY dc.movimento_codigo, dc.complemento_codigo, dc.complemento_valor
+                """
             )
-            SELECT dc.movimento_codigo, dc.movimento_nome,
-                   dc.complemento_codigo, dc.complemento_valor,
-                   dc.complemento_nome, dc.complemento_descricao,
-                   COUNT(*) AS occurrences,
-                   COUNT(DISTINCT dc.process_number) AS process_count
-            FROM datajud_complemento dc
-            JOIN current c
-              ON c.process_number = dc.process_number
-             AND c.fetched_at = dc.fetched_at
-            GROUP BY dc.movimento_codigo, dc.movimento_nome,
-                     dc.complemento_codigo, dc.complemento_valor,
-                     dc.complemento_nome, dc.complemento_descricao
-            ORDER BY dc.movimento_codigo, dc.complemento_codigo, dc.complemento_valor
-            """
-        )
-        return [dict(r) for r in cur.fetchall()]
+            return [dict(r) for r in cur.fetchall()]
 
     def enrichment_status(self, process_numbers: List[str]) -> List[Dict[str, Any]]:
         """Bulk "which of these have a current DataJud enrichment" — the
@@ -1141,28 +1142,29 @@ class SnapshotStore:
             return []
         latest: Dict[str, Dict[str, Any]] = {}
         chunk = 1000
-        cur = self._conn.cursor()
-        for i in range(0, len(process_numbers), chunk):
-            sub = process_numbers[i : i + chunk]
-            placeholders = ",".join("?" * len(sub))
-            cur.execute(
-                f"""
-                SELECT e.process_number, e.fetched_at, e.datajud_found
-                FROM datajud_enrichment e
-                JOIN (
-                  SELECT process_number, MAX(fetched_at) AS ts
-                  FROM datajud_enrichment
-                  WHERE process_number IN ({placeholders})
-                  GROUP BY process_number
-                ) m ON m.process_number = e.process_number AND m.ts = e.fetched_at
-                """,
-                sub,
-            )
-            for row in cur.fetchall():
-                latest[row["process_number"]] = {
-                    "fetched_at": row["fetched_at"],
-                    "datajud_found": bool(row["datajud_found"]),
-                }
+        with self._lock:
+            cur = self._conn.cursor()
+            for i in range(0, len(process_numbers), chunk):
+                sub = process_numbers[i : i + chunk]
+                placeholders = ",".join("?" * len(sub))
+                cur.execute(
+                    f"""
+                    SELECT e.process_number, e.fetched_at, e.datajud_found
+                    FROM datajud_enrichment e
+                    JOIN (
+                      SELECT process_number, MAX(fetched_at) AS ts
+                      FROM datajud_enrichment
+                      WHERE process_number IN ({placeholders})
+                      GROUP BY process_number
+                    ) m ON m.process_number = e.process_number AND m.ts = e.fetched_at
+                    """,
+                    sub,
+                )
+                for row in cur.fetchall():
+                    latest[row["process_number"]] = {
+                        "fetched_at": row["fetched_at"],
+                        "datajud_found": bool(row["datajud_found"]),
+                    }
         out: List[Dict[str, Any]] = []
         for pn in process_numbers:
             row = latest.get(pn)
