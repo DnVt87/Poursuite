@@ -161,7 +161,13 @@ class SnapshotStore:
         self.db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.logger = logger or setup_logging("esaj_snapshots")
-        self._lock = threading.Lock()
+        # RLock (re-entrant): every DB-touching method serializes on this so the
+        # single shared SQLite connection is never used by two threads at once
+        # (FastAPI runs sync endpoints in a threadpool — concurrent requests on
+        # the same connection raise "bad parameter or other API misuse").
+        # Re-entrant because read methods nest (e.g. get_linked ->
+        # _latest_snapshot_ts) and a plain Lock would self-deadlock.
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
@@ -388,9 +394,10 @@ class SnapshotStore:
         raise RuntimeError(f"Unknown migration version: {version}")
 
     def schema_version(self) -> int:
-        cur = self._conn.cursor()
-        cur.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version")
-        return int(cur.fetchone()[0])
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version")
+            return int(cur.fetchone()[0])
 
     # ─────────────────────────────────────────────────────────────────
     # Save (diff-aware)
@@ -558,55 +565,59 @@ class SnapshotStore:
 
     def get_latest(self, process_number: str) -> Optional[Dict[str, Any]]:
         """Return the most recent snapshot for a process, or None."""
-        cur = self._conn.cursor()
-        cur.execute(
-            """
-            SELECT * FROM process_snapshot
-            WHERE process_number = ?
-            ORDER BY snapshot_ts DESC
-            LIMIT 1
-            """,
-            (process_number,),
-        )
-        row = cur.fetchone()
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                """
+                SELECT * FROM process_snapshot
+                WHERE process_number = ?
+                ORDER BY snapshot_ts DESC
+                LIMIT 1
+                """,
+                (process_number,),
+            )
+            row = cur.fetchone()
         return dict(row) if row else None
 
     def list_snapshots(self, process_number: str) -> List[Dict[str, Any]]:
         """Return all snapshots for a process, newest first."""
-        cur = self._conn.cursor()
-        cur.execute(
-            """
-            SELECT snapshot_ts, snapshot_hash, scraped_at, scrape_outcome, scrape_error
-            FROM process_snapshot
-            WHERE process_number = ?
-            ORDER BY snapshot_ts DESC
-            """,
-            (process_number,),
-        )
-        return [dict(r) for r in cur.fetchall()]
-
-    def count_snapshots(self, process_number: Optional[str] = None) -> int:
-        cur = self._conn.cursor()
-        if process_number is None:
-            cur.execute("SELECT COUNT(*) FROM process_snapshot")
-        else:
+        with self._lock:
+            cur = self._conn.cursor()
             cur.execute(
-                "SELECT COUNT(*) FROM process_snapshot WHERE process_number = ?",
+                """
+                SELECT snapshot_ts, snapshot_hash, scraped_at, scrape_outcome, scrape_error
+                FROM process_snapshot
+                WHERE process_number = ?
+                ORDER BY snapshot_ts DESC
+                """,
                 (process_number,),
             )
-        return int(cur.fetchone()[0])
+            return [dict(r) for r in cur.fetchall()]
+
+    def count_snapshots(self, process_number: Optional[str] = None) -> int:
+        with self._lock:
+            cur = self._conn.cursor()
+            if process_number is None:
+                cur.execute("SELECT COUNT(*) FROM process_snapshot")
+            else:
+                cur.execute(
+                    "SELECT COUNT(*) FROM process_snapshot WHERE process_number = ?",
+                    (process_number,),
+                )
+            return int(cur.fetchone()[0])
 
     # ─────────────────────────────────────────────────────────────────
     # Child-table retrieval (for the 4 GET endpoints)
     # ─────────────────────────────────────────────────────────────────
 
     def _latest_snapshot_ts(self, process_number: str) -> Optional[str]:
-        cur = self._conn.cursor()
-        cur.execute(
-            "SELECT MAX(snapshot_ts) FROM process_snapshot WHERE process_number = ?",
-            (process_number,),
-        )
-        row = cur.fetchone()
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "SELECT MAX(snapshot_ts) FROM process_snapshot WHERE process_number = ?",
+                (process_number,),
+            )
+            row = cur.fetchone()
         return row[0] if row and row[0] else None
 
     def get_movimentos(
@@ -619,60 +630,63 @@ class SnapshotStore:
 
         `since` filters by data_hora >= since (ISO 8601 date or full ts).
         """
-        ts = snapshot_ts or self._latest_snapshot_ts(process_number)
-        if ts is None:
-            return []
-        cur = self._conn.cursor()
-        if since:
-            cur.execute(
-                "SELECT * FROM movimento "
-                "WHERE process_number = ? AND snapshot_ts = ? "
-                "AND data_hora IS NOT NULL AND data_hora >= ? "
-                "ORDER BY ordem",
-                (process_number, ts, since),
-            )
-        else:
-            cur.execute(
-                "SELECT * FROM movimento "
-                "WHERE process_number = ? AND snapshot_ts = ? "
-                "ORDER BY ordem",
-                (process_number, ts),
-            )
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            ts = snapshot_ts or self._latest_snapshot_ts(process_number)
+            if ts is None:
+                return []
+            cur = self._conn.cursor()
+            if since:
+                cur.execute(
+                    "SELECT * FROM movimento "
+                    "WHERE process_number = ? AND snapshot_ts = ? "
+                    "AND data_hora IS NOT NULL AND data_hora >= ? "
+                    "ORDER BY ordem",
+                    (process_number, ts, since),
+                )
+            else:
+                cur.execute(
+                    "SELECT * FROM movimento "
+                    "WHERE process_number = ? AND snapshot_ts = ? "
+                    "ORDER BY ordem",
+                    (process_number, ts),
+                )
+            return [dict(r) for r in cur.fetchall()]
 
     def get_linked(
         self,
         process_number: str,
         snapshot_ts: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        ts = snapshot_ts or self._latest_snapshot_ts(process_number)
-        if ts is None:
-            return []
-        cur = self._conn.cursor()
-        cur.execute(
-            "SELECT * FROM linked_process "
-            "WHERE process_number = ? AND snapshot_ts = ? "
-            "ORDER BY relationship_type, linked_number",
-            (process_number, ts),
-        )
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            ts = snapshot_ts or self._latest_snapshot_ts(process_number)
+            if ts is None:
+                return []
+            cur = self._conn.cursor()
+            cur.execute(
+                "SELECT * FROM linked_process "
+                "WHERE process_number = ? AND snapshot_ts = ? "
+                "ORDER BY relationship_type, linked_number",
+                (process_number, ts),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def get_peticoes(
         self,
         process_number: str,
         snapshot_ts: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        ts = snapshot_ts or self._latest_snapshot_ts(process_number)
-        if ts is None:
-            return []
-        cur = self._conn.cursor()
-        cur.execute(
-            "SELECT * FROM peticao "
-            "WHERE process_number = ? AND snapshot_ts = ? "
-            "ORDER BY ordem",
-            (process_number, ts),
-        )
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            ts = snapshot_ts or self._latest_snapshot_ts(process_number)
+            if ts is None:
+                return []
+            cur = self._conn.cursor()
+            cur.execute(
+                "SELECT * FROM peticao "
+                "WHERE process_number = ? AND snapshot_ts = ? "
+                "ORDER BY ordem",
+                (process_number, ts),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     # ─────────────────────────────────────────────────────────────────
     # Query (POST /api/query)
@@ -690,30 +704,31 @@ class SnapshotStore:
 
         built = build_query(body)
 
-        cur = self._conn.cursor()
-        try:
-            cur.execute(built.count_sql, built.count_params)
-        except sqlite3.OperationalError as e:
-            raise QueryError(f"SQL error (likely FTS5 syntax): {e}") from e
-        total = int(cur.fetchone()[0])
-
-        results: List[Dict[str, Any]] = []
-        if not built.count_only and built.limit > 0:
+        with self._lock:
+            cur = self._conn.cursor()
             try:
-                cur.execute(built.select_sql, built.select_params)
+                cur.execute(built.count_sql, built.count_params)
             except sqlite3.OperationalError as e:
                 raise QueryError(f"SQL error (likely FTS5 syntax): {e}") from e
-            rows = cur.fetchall()
-            for row in rows:
-                results.append({
-                    "process_number": row["process_number"],
-                    "snapshot_ts": row["snapshot_ts"],
-                    "fields": {
-                        f: row[f]
-                        for f in built.fields
-                        if f not in ("process_number",) and f in row.keys()
-                    },
-                })
+            total = int(cur.fetchone()[0])
+
+            results: List[Dict[str, Any]] = []
+            if not built.count_only and built.limit > 0:
+                try:
+                    cur.execute(built.select_sql, built.select_params)
+                except sqlite3.OperationalError as e:
+                    raise QueryError(f"SQL error (likely FTS5 syntax): {e}") from e
+                rows = cur.fetchall()
+                for row in rows:
+                    results.append({
+                        "process_number": row["process_number"],
+                        "snapshot_ts": row["snapshot_ts"],
+                        "fields": {
+                            f: row[f]
+                            for f in built.fields
+                            if f not in ("process_number",) and f in row.keys()
+                        },
+                    })
         return {
             "total": total,
             "limit": built.limit,
@@ -727,9 +742,10 @@ class SnapshotStore:
     # ─────────────────────────────────────────────────────────────────
 
     def list_flagged(self) -> List[str]:
-        cur = self._conn.cursor()
-        cur.execute("SELECT process_number FROM process_flags ORDER BY flagged_at DESC")
-        return [r[0] for r in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("SELECT process_number FROM process_flags ORDER BY flagged_at DESC")
+            return [r[0] for r in cur.fetchall()]
 
     def flag(self, process_number: str) -> Dict[str, Any]:
         """Mark a process as flagged. Idempotent — re-flagging keeps the
@@ -766,17 +782,19 @@ class SnapshotStore:
     # ─────────────────────────────────────────────────────────────────
 
     def list_saved_queries(self) -> List[Dict[str, Any]]:
-        cur = self._conn.cursor()
-        cur.execute(
-            "SELECT id, name, description, created_at, last_run_at, last_run_count "
-            "FROM saved_queries ORDER BY COALESCE(last_run_at, created_at) DESC"
-        )
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "SELECT id, name, description, created_at, last_run_at, last_run_count "
+                "FROM saved_queries ORDER BY COALESCE(last_run_at, created_at) DESC"
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def get_saved_query(self, qid: int) -> Optional[Dict[str, Any]]:
-        cur = self._conn.cursor()
-        cur.execute("SELECT * FROM saved_queries WHERE id = ?", (qid,))
-        row = cur.fetchone()
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("SELECT * FROM saved_queries WHERE id = ?", (qid,))
+            row = cur.fetchone()
         return dict(row) if row else None
 
     def create_saved_query(
@@ -864,18 +882,19 @@ class SnapshotStore:
         now = datetime.now(timezone.utc)
         latest: Dict[str, str] = {}
         chunk = 1000
-        cur = self._conn.cursor()
-        for i in range(0, len(process_numbers), chunk):
-            sub = process_numbers[i : i + chunk]
-            placeholders = ",".join("?" * len(sub))
-            cur.execute(
-                f"SELECT process_number, MAX(snapshot_ts) AS ts "
-                f"FROM process_snapshot WHERE process_number IN ({placeholders}) "
-                f"GROUP BY process_number",
-                sub,
-            )
-            for row in cur.fetchall():
-                latest[row["process_number"]] = row["ts"]
+        with self._lock:
+            cur = self._conn.cursor()
+            for i in range(0, len(process_numbers), chunk):
+                sub = process_numbers[i : i + chunk]
+                placeholders = ",".join("?" * len(sub))
+                cur.execute(
+                    f"SELECT process_number, MAX(snapshot_ts) AS ts "
+                    f"FROM process_snapshot WHERE process_number IN ({placeholders}) "
+                    f"GROUP BY process_number",
+                    sub,
+                )
+                for row in cur.fetchall():
+                    latest[row["process_number"]] = row["ts"]
 
         results: List[Dict[str, Any]] = []
         for pn in process_numbers:
@@ -1014,13 +1033,14 @@ class SnapshotStore:
 
     def get_latest_enrichment(self, process_number: str) -> Optional[Dict[str, Any]]:
         """Most recent DataJud enrichment row for a process, or None."""
-        cur = self._conn.cursor()
-        cur.execute(
-            "SELECT * FROM datajud_enrichment WHERE process_number = ? "
-            "ORDER BY fetched_at DESC LIMIT 1",
-            (process_number,),
-        )
-        row = cur.fetchone()
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "SELECT * FROM datajud_enrichment WHERE process_number = ? "
+                "ORDER BY fetched_at DESC LIMIT 1",
+                (process_number,),
+            )
+            row = cur.fetchone()
         return dict(row) if row else None
 
     def get_complementos(
@@ -1028,36 +1048,38 @@ class SnapshotStore:
     ) -> List[Dict[str, Any]]:
         """complementosTabelados rows for the given enrichment (latest if not
         specified). Returns [] if the process has no enrichment."""
-        ts = fetched_at
-        if ts is None:
+        with self._lock:
+            ts = fetched_at
+            if ts is None:
+                cur = self._conn.cursor()
+                cur.execute(
+                    "SELECT MAX(fetched_at) FROM datajud_enrichment WHERE process_number = ?",
+                    (process_number,),
+                )
+                row = cur.fetchone()
+                ts = row[0] if row and row[0] else None
+            if ts is None:
+                return []
             cur = self._conn.cursor()
             cur.execute(
-                "SELECT MAX(fetched_at) FROM datajud_enrichment WHERE process_number = ?",
-                (process_number,),
+                "SELECT * FROM datajud_complemento "
+                "WHERE process_number = ? AND fetched_at = ? "
+                "ORDER BY movimento_codigo, complemento_codigo, complemento_valor",
+                (process_number, ts),
             )
-            row = cur.fetchone()
-            ts = row[0] if row and row[0] else None
-        if ts is None:
-            return []
-        cur = self._conn.cursor()
-        cur.execute(
-            "SELECT * FROM datajud_complemento "
-            "WHERE process_number = ? AND fetched_at = ? "
-            "ORDER BY movimento_codigo, complemento_codigo, complemento_valor",
-            (process_number, ts),
-        )
-        return [dict(r) for r in cur.fetchall()]
+            return [dict(r) for r in cur.fetchall()]
 
     def count_enrichments(self, process_number: Optional[str] = None) -> int:
-        cur = self._conn.cursor()
-        if process_number is None:
-            cur.execute("SELECT COUNT(*) FROM datajud_enrichment")
-        else:
-            cur.execute(
-                "SELECT COUNT(*) FROM datajud_enrichment WHERE process_number = ?",
-                (process_number,),
-            )
-        return int(cur.fetchone()[0])
+        with self._lock:
+            cur = self._conn.cursor()
+            if process_number is None:
+                cur.execute("SELECT COUNT(*) FROM datajud_enrichment")
+            else:
+                cur.execute(
+                    "SELECT COUNT(*) FROM datajud_enrichment WHERE process_number = ?",
+                    (process_number,),
+                )
+            return int(cur.fetchone()[0])
 
     def list_unenriched_process_numbers(self, limit: Optional[int] = None) -> List[str]:
         """Distinct loaded process numbers that have no DataJud enrichment yet —
@@ -1071,9 +1093,10 @@ class SnapshotStore:
         )
         if limit is not None:
             sql += f" LIMIT {int(limit)}"
-        cur = self._conn.cursor()
-        cur.execute(sql)
-        return [r[0] for r in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(sql)
+            return [r[0] for r in cur.fetchall()]
 
     # ─────────────────────────────────────────────────────────────────
     # Lifecycle
