@@ -89,6 +89,41 @@ Reached via "+ Existe petição".
 
 ---
 
+## DataJud enrichment fields (Layer 3-lite)
+
+Reached via "+ Enriquecimento (DataJud)" (the 1:1 `enrichment` predicate) and
+"+ Existe complemento (DataJud)" (`complemento_any`). Both filter via EXISTS on
+the process's **current** enrichment row (`MAX(fetched_at)`; see `esaj_query.py`).
+Distinct from the eSAJ `movimento.complementos_text` (free text) — these are
+DataJud's structured `complementosTabelados`.
+
+### `enrichment` (current-row predicate)
+
+| Field | Allowed ops | Status |
+|---|---|---|
+| `grau` | `=`, `!=`, `in`, `not_in`, null | Y |
+
+`grau` is the only filterable enrichment field in v1; `assuntos` /
+`codigo_municipio_ibge` / `dataHoraUltimaAtualizacao` are display-only (Detalhe).
+The clause is single-predicate **by UI choice** — `_synth_child_clause` already
+accepts a full `and`/`or`/`not` tree, so adding fields later is additive.
+
+### Complemento (inside `complemento_any`)
+
+| Field | Allowed ops | Status |
+|---|---|---|
+| `complemento_codigo` | `=`, `!=`, `in`, `not_in`, null | Y |
+| `complemento_valor` | `=`, `!=`, `in`, `not_in`, null | Y |
+| `complemento_nome` | `=`, `!=`, `in`, `not_in`, null | Y |
+| `complemento_descricao` | `=`, `!=`, `in`, `not_in`, null | Y |
+| `movimento_codigo` | `=`, `!=`, `in`, `not_in`, null | Y |
+| `movimento_nome` | `=`, `!=`, `in`, `not_in`, null | Y |
+
+The success/failure axis: `complemento_any: {and: [{complemento_codigo: X},
+{complemento_valor: Y}]}`.
+
+---
+
 ## Meta-keys (boolean composition + scope)
 
 | Meta-key | How expressed in the visual builder | Status |
@@ -102,6 +137,9 @@ Reached via "+ Existe petição".
 | `movimento_count` | "+ Contagem mov." | Y |
 | `linked_count` | "+ Contagem vinculados" | Y |
 | `peticao_count` | "+ Contagem petições" | Y |
+| `enrichment` | "+ Enriquecimento (DataJud)" — 1:1 predicate on the current enrichment row. | Y |
+| `complemento_any` | "+ Existe complemento (DataJud)". | Y |
+| `complemento_count` | "+ Contagem complementos". | Y |
 
 Boolean composition inside `*_any` sub-clauses is also supported recursively (the `renderChildNode` walker handles `and`/`or`/`not` scoped to the child table's columns).
 

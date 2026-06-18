@@ -41,6 +41,17 @@ MOVIMENTO_FTS_FIELDS: Tuple[str, ...] = ("nome", "complementos_text")
 LINKED_FIELDS: Tuple[str, ...] = ("linked_number", "relationship_type")
 PETICAO_FIELDS: Tuple[str, ...] = ("ordem", "data", "tipo", "cd_documento")
 
+# DataJud enrichment (Layer 3-lite). Filtered via EXISTS against the process's
+# CURRENT enrichment row — see _synth_enrichment / _synth_complemento_any.
+# v1 filterable enrichment field is `grau` only; assuntos / codigo_municipio_ibge
+# / dataHoraUltimaAtualizacao are display-only (rendered in Detalhe, not filtered).
+ENRICHMENT_FIELDS: Tuple[str, ...] = ("grau",)
+COMPLEMENTO_FIELDS: Tuple[str, ...] = (
+    "complemento_codigo", "complemento_valor",
+    "complemento_nome", "complemento_descricao",
+    "movimento_codigo", "movimento_nome",
+)
+
 SCALAR_OPS: Tuple[str, ...] = ("=", "!=", "<", "<=", ">", ">=")
 LIST_OPS: Tuple[str, ...] = ("in", "not_in")
 NULL_OPS: Tuple[str, ...] = ("is_null", "is_not_null")
@@ -193,6 +204,14 @@ def _synth_clause(clause: Dict[str, Any], ctx: _Ctx) -> str:
     if "peticao_count" in clause:
         return _synth_child_count("peticao", clause["peticao_count"], ctx)
 
+    # DataJud enrichment sub-clauses (scoped to the current enrichment row)
+    if "enrichment" in clause:
+        return _synth_enrichment(clause["enrichment"], ctx)
+    if "complemento_any" in clause:
+        return _synth_complemento_any(clause["complemento_any"], ctx)
+    if "complemento_count" in clause:
+        return _synth_complemento_count(clause["complemento_count"], ctx)
+
     # Leaf — header field condition
     if "field" in clause:
         return _synth_header_leaf(clause, ctx)
@@ -290,6 +309,73 @@ def _synth_child_count(table: str, spec: Dict[str, Any], ctx: _Ctx) -> str:
         f"((SELECT COUNT(*) FROM {table} t "
         f"WHERE t.process_number = ps.process_number "
         f"AND t.snapshot_ts = ps.snapshot_ts) {op} {ctx.bind(val)})"
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# DataJud enrichment sub-clauses (Layer 3-lite)
+# ──────────────────────────────────────────────────────────────────────
+
+# Correlated subquery selecting the process's CURRENT enrichment timestamp.
+# Enrichment is append-on-change keyed by (process_number, fetched_at) on a
+# cadence independent of snapshots, so "current" is the latest fetched_at — NOT
+# ps.snapshot_ts. datajud_complemento rows carry their parent enrichment's
+# fetched_at, so the same predicate scopes complementos to the current row.
+_CURRENT_ENRICHMENT_FETCHED_AT = (
+    "(SELECT MAX(de2.fetched_at) FROM datajud_enrichment de2 "
+    "WHERE de2.process_number = ps.process_number)"
+)
+
+
+def _synth_enrichment(inner: Dict[str, Any], ctx: _Ctx) -> str:
+    """EXISTS against the process's current datajud_enrichment row.
+
+    A process with no enrichment fails EXISTS, so enrichment filters match only
+    enriched processes (v1 semantic — `grau != "G1"` excludes un-enriched; see
+    UI_DESIGN_NOTES.md).
+
+    `inner` goes through `_synth_child_clause`, which already accepts BOTH a
+    single `{field, op, value}` leaf AND a full `and`/`or`/`not` tree. In v1
+    `grau` is the only filterable enrichment field, so callers (and the visual
+    builder, EU-d) pass a single predicate — but that's a UI simplification, not
+    a parser limit. If `codigo_municipio_ibge` / freshness graduate from
+    display-only to filterable, add them to ENRICHMENT_FIELDS and let the builder
+    emit a tree; nothing changes here. Don't bake single-predicate into the
+    builder as if it were permanent."""
+    inner_sql = _synth_child_clause(inner, allowed=ENRICHMENT_FIELDS, alias="de", ctx=ctx)
+    return (
+        "EXISTS (SELECT 1 FROM datajud_enrichment de "
+        "WHERE de.process_number = ps.process_number "
+        f"AND de.fetched_at = {_CURRENT_ENRICHMENT_FETCHED_AT} "
+        f"AND {inner_sql})"
+    )
+
+
+def _synth_complemento_any(inner: Dict[str, Any], ctx: _Ctx) -> str:
+    """EXISTS against the current enrichment's complementosTabelados — the
+    success/failure-axis filter (e.g. complemento_codigo + complemento_valor)."""
+    inner_sql = _synth_child_clause(inner, allowed=COMPLEMENTO_FIELDS, alias="dc", ctx=ctx)
+    return (
+        "EXISTS (SELECT 1 FROM datajud_complemento dc "
+        "WHERE dc.process_number = ps.process_number "
+        f"AND dc.fetched_at = {_CURRENT_ENRICHMENT_FETCHED_AT} "
+        f"AND {inner_sql})"
+    )
+
+
+def _synth_complemento_count(spec: Dict[str, Any], ctx: _Ctx) -> str:
+    if "op" not in spec or "value" not in spec:
+        raise QueryError("complemento_count needs `op` and `value`")
+    op = spec["op"]
+    if op not in COUNT_OPS:
+        raise QueryError(f"complemento_count op must be one of {list(COUNT_OPS)}")
+    val = spec["value"]
+    if not isinstance(val, int):
+        raise QueryError(f"complemento_count value must be an integer, got {type(val).__name__}")
+    return (
+        "((SELECT COUNT(*) FROM datajud_complemento dc "
+        "WHERE dc.process_number = ps.process_number "
+        f"AND dc.fetched_at = {_CURRENT_ENRICHMENT_FETCHED_AT}) {op} {ctx.bind(val)})"
     )
 
 

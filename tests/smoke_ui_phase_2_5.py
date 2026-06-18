@@ -259,6 +259,17 @@ def main() -> int:
             {"movimento_any": {"field": "nome", "op": "match", "value": "penhora"}},
         ]}, "snapshot": "any"},
         {"where": {"field": "value_centavos", "op": ">=", "value": 1000000}},
+        # DataJud enrichment clauses (EU-a) — EXISTS, must synthesize; joins stays [].
+        {"where": {"enrichment": {"field": "grau", "op": "=", "value": "G1"}}},
+        {"where": {"complemento_any": {"and": [
+            {"field": "complemento_codigo", "op": "=", "value": 2},
+            {"field": "complemento_valor", "op": "=", "value": 2},
+        ]}}},
+        {"where": {"complemento_count": {"op": ">=", "value": 1}}},
+        {"where": {"and": [
+            {"field": "class_type", "op": "!=", "value": ""},
+            {"enrichment": {"field": "grau", "op": "in", "value": ["G1", "G2"]}},
+        ]}},
     ]
     for body in panel:
         b = build_query(body)

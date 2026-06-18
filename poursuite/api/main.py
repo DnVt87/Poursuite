@@ -20,6 +20,7 @@ from poursuite.db.esaj_snapshots import SnapshotStore
 from poursuite.db.process_groups import ProcessGroupStore
 from poursuite.db.search import SearchEngine
 from poursuite.api.routes import aggregates as aggregates_router
+from poursuite.api.routes import enrichment as enrichment_router
 from poursuite.api.routes import esaj_health as esaj_health_router
 from poursuite.api.routes import explain_zero as explain_zero_router
 from poursuite.api.routes import extract as extract_router
@@ -68,3 +69,5 @@ app.include_router(aggregates_router.router)
 app.include_router(explain_zero_router.router)
 app.include_router(saved_queries_router.router)
 app.include_router(esaj_health_router.router)
+# Layer 3-lite enrichment surfacing (EU-b/EU-c).
+app.include_router(enrichment_router.router)
