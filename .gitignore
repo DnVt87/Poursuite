@@ -27,6 +27,9 @@ env/
 *.sqlite
 *.sqlite3
 
+# Local secrets (start.sh reads the API key from here)
+.poursuite_api_key
+
 # Claude internal
 .claude/
 
