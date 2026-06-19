@@ -103,21 +103,32 @@ else
       printf "."; sleep 1
     done
     printf "\n"
-    if [ -n "${URL:-}" ]; then
-      echo ""
-      echo "  ┌──────────────────────────────────────────────────────────────"
-      echo "  │  PUBLIC URL :  $URL"
-      echo "  │  API KEY    :  paste your POURSUITE_API_KEY into the page header"
-      echo "  │  (this URL changes every run — re-send it to the lawyers)"
-      echo "  └──────────────────────────────────────────────────────────────"
-      echo ""
-    else
-      echo "  (couldn't read the URL yet — check $CF_LOG)"
+    if [ -z "${URL:-}" ]; then
+      echo "  (URL not captured yet — check $CF_LOG)"
     fi
   fi
 fi
 
-echo "Both running. Press Ctrl-C to stop. Live logs:"
-echo "------------------------------------------------------------------------"
-tail -f "$APP_LOG" "$CF_LOG" 2>/dev/null
+echo ""
+echo "═══════════════════════════════════════════════════════════════════════════"
+if [ -n "${URL:-}" ]; then
+  echo "   OPEN THIS URL IN A BROWSER (and paste your API key in the page header):"
+  echo ""
+  echo "        $URL"
+  echo ""
+  echo "   The URL changes every run — re-send it to the lawyers each time."
+elif [ -n "$TUNNEL_NAME" ]; then
+  echo "   Named tunnel '$TUNNEL_NAME' is up — use your configured hostname."
+else
+  echo "   Tunnel URL not captured — check $CF_LOG"
+fi
+echo "═══════════════════════════════════════════════════════════════════════════"
+echo ""
+echo "   RUNNING. Keep this window open. Press Ctrl-C to stop both."
+echo "   Logs (if you need them):  $APP_LOG"
+echo "                             $CF_LOG"
+
+# Wait quietly until Ctrl-C (trap) or a process exits — no log flood, so the
+# URL above stays visible. Logs are still written to the files above.
+wait
 cleanup
